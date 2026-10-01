@@ -11,7 +11,7 @@ public class Camera3DController
     private float _currentYaw = 0f;
     private float _currentPitch = 26f;
     private float _targetPitch = 26f;
-    private float _distance = 15.5f;
+    private float _distance = 50f;
     private Vector3 _currentLookTarget;
 
     public float CurrentYaw => _currentYaw;
