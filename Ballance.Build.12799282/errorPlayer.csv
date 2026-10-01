@@ -1,0 +1,10 @@
+
+Systemname,Modulname, Funktion, Fehlerstatus,Datum,Uhrzeit
+
+Player,NemoContext.cpp,findScreenMode,VxDriverDesc ist NULL, kritisch,05/31/24,16:02:45
+Player,NemoContext.cpp,CNeMoContext::init(),Probleme mit der Render-Driver-Description, kritisch,05/31/24,16:02:45
+Player,GamePlayer.cpp,CGamePlayer::initEngine(),NemoContext Exception,05/31/24,16:02:45
+Player,GamePlayer.cpp,reinitEngine(),Unbehandelte Exception ,05/31/24,16:02:45
+Player,GamePlayer.cpp,init(),Unbehandelte Exception - Abbruch,05/31/24,16:02:45
+Player,player,WinMain,Die Anwendung konnte nicht initialisiert werden!!!,05/31/24,16:02:47
+Player,GamePlayer.cpp,done,Unbehandelte Exception,05/31/24,16:02:47

@@ -1,0 +1,29 @@
+
+Log Messages :
+
+ProcessorCheck ... ,05/31/24,16:02:45
+Intel CPU found ... OK
+,05/31/24,16:02:45
+OS Check ... ,05/31/24,16:02:45
+Windows95/98 found ... OK
+,05/31/24,16:02:45
+Checking available memory ... ,05/31/24,16:02:45
+memory usage: 63 percent
+,05/31/24,16:02:45
+2147483647 total bytes of physical memory.
+,05/31/24,16:02:45
+2047 free Mbytes of physical memory.
+,05/31/24,16:02:45
+4095 total Mbytes of paging file.
+,05/31/24,16:02:45
+4095 free Mbytes of paging file.
+,05/31/24,16:02:45
+2047 total Mbytes of virtual memory.
+,05/31/24,16:02:45
+1993 free Mbytes of virtual memory.
+,05/31/24,16:02:45
+Memory check successful!
+,05/31/24,16:02:45
+DirectX version is 4.9.0.904 ... ,05/31/24,16:02:45
+OK !
+,05/31/24,16:02:45

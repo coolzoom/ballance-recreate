@@ -1,0 +1,188 @@
+using System.Numerics;
+using BallanceRevival.Nmo;
+using Raylib_cs;
+
+namespace BallanceRevival.Rendering;
+
+public unsafe class RenderSubmesh : IDisposable
+{
+    public Mesh Mesh;
+    public Material Material;
+
+    public RenderSubmesh(Mesh mesh, Material material)
+    {
+        Mesh = mesh;
+        Material = material;
+    }
+
+    public void Draw(Matrix4x4 transform)
+    {
+        Raylib.DrawMesh(Mesh, Material, transform);
+    }
+
+    public void Dispose()
+    {
+        Raylib.UnloadMesh(Mesh);
+        Raylib.UnloadMaterial(Material);
+    }
+}
+
+public class RenderMesh : IDisposable
+{
+    public List<RenderSubmesh> Submeshes { get; } = [];
+
+    public void Draw(Matrix4x4 transform)
+    {
+        foreach (var submesh in Submeshes)
+        {
+            submesh.Draw(transform);
+        }
+    }
+
+    public void Dispose()
+    {
+        foreach (var submesh in Submeshes)
+        {
+            submesh.Dispose();
+        }
+        Submeshes.Clear();
+    }
+}
+
+public unsafe class MeshRenderer : IDisposable
+{
+    private readonly TextureManager _textureManager;
+    private readonly Dictionary<int, RenderMesh> _cache = [];
+    private readonly NmoLevel _level;
+
+    public MeshRenderer(TextureManager textureManager, NmoLevel level)
+    {
+        _textureManager = textureManager;
+        _level = level;
+    }
+
+    public void DrawEntity(NmoEntity entity)
+    {
+        if (entity.Mesh == null) return;
+
+        var renderMesh = GetOrCreateRenderMesh(entity.Mesh);
+        renderMesh.Draw(entity.WorldMatrix);
+    }
+
+    public void DrawMesh(NmoMesh mesh, Matrix4x4 transform)
+    {
+        var renderMesh = GetOrCreateRenderMesh(mesh);
+        renderMesh.Draw(transform);
+    }
+
+    public RenderMesh GetOrCreateRenderMesh(NmoMesh nmoMesh)
+    {
+        if (_cache.TryGetValue(nmoMesh.ObjectIndex, out var cached))
+            return cached;
+
+        var renderMesh = CreateRenderMesh(nmoMesh);
+        _cache[nmoMesh.ObjectIndex] = renderMesh;
+        return renderMesh;
+    }
+
+    private RenderMesh CreateRenderMesh(NmoMesh nmoMesh)
+    {
+        var renderMesh = new RenderMesh();
+
+        int vCount = nmoMesh.Positions.Length;
+        if (vCount == 0 || nmoMesh.Faces.Count == 0)
+            return renderMesh;
+
+        foreach (var submesh in nmoMesh.Submeshes)
+        {
+            int triCount = submesh.Indices.Count / 3;
+            if (triCount == 0) continue;
+
+            Mesh mesh = new Mesh
+            {
+                VertexCount = vCount,
+                TriangleCount = triCount,
+                Vertices = (float*)Raylib.MemAlloc((uint)(vCount * 3 * sizeof(float))),
+                Normals = (float*)Raylib.MemAlloc((uint)(vCount * 3 * sizeof(float))),
+                TexCoords = (float*)Raylib.MemAlloc((uint)(vCount * 2 * sizeof(float))),
+                Indices = (ushort*)Raylib.MemAlloc((uint)(triCount * 3 * sizeof(ushort)))
+            };
+
+            for (int i = 0; i < vCount; i++)
+            {
+                mesh.Vertices[i * 3 + 0] = nmoMesh.Positions[i].X;
+                mesh.Vertices[i * 3 + 1] = nmoMesh.Positions[i].Y;
+                mesh.Vertices[i * 3 + 2] = nmoMesh.Positions[i].Z;
+
+                if (nmoMesh.Normals.Length > i)
+                {
+                    mesh.Normals[i * 3 + 0] = nmoMesh.Normals[i].X;
+                    mesh.Normals[i * 3 + 1] = nmoMesh.Normals[i].Y;
+                    mesh.Normals[i * 3 + 2] = nmoMesh.Normals[i].Z;
+                }
+                else
+                {
+                    mesh.Normals[i * 3 + 0] = 0f;
+                    mesh.Normals[i * 3 + 1] = 1f;
+                    mesh.Normals[i * 3 + 2] = 0f;
+                }
+
+                if (nmoMesh.TexCoords.Length > i)
+                {
+                    mesh.TexCoords[i * 2 + 0] = nmoMesh.TexCoords[i].X;
+                    mesh.TexCoords[i * 2 + 1] = nmoMesh.TexCoords[i].Y;
+                }
+                else
+                {
+                    mesh.TexCoords[i * 2 + 0] = 0f;
+                    mesh.TexCoords[i * 2 + 1] = 0f;
+                }
+            }
+
+            for (int i = 0; i < submesh.Indices.Count; i++)
+            {
+                mesh.Indices[i] = submesh.Indices[i];
+            }
+
+            Raylib.UploadMesh(ref mesh, false);
+
+            Material mat = Raylib.LoadMaterialDefault();
+
+            // Resolve material texture and tint
+            Color tint = Color.White;
+            Texture2D texture = _textureManager.GetTexture(string.Empty);
+
+            if (_level.Materials.TryGetValue((int)submesh.MaterialObjectIndex, out var nmoMat))
+            {
+                uint argb = nmoMat.DiffuseColor;
+                byte a = (byte)((argb >> 24) & 0xFF);
+                byte r = (byte)((argb >> 16) & 0xFF);
+                byte g = (byte)((argb >> 8) & 0xFF);
+                byte b = (byte)(argb & 0xFF);
+                if (a == 0) a = 255;
+                tint = new Color(r, g, b, a);
+
+                if (_level.Textures.TryGetValue((int)nmoMat.TextureObjectIndex, out var nmoTex))
+                {
+                    texture = _textureManager.GetTexture(nmoTex.FileName);
+                }
+            }
+
+            Raylib.SetMaterialTexture(ref mat, MaterialMapIndex.Albedo, texture);
+            mat.Maps[(int)MaterialMapIndex.Albedo].Color = tint;
+
+            renderMesh.Submeshes.Add(new RenderSubmesh(mesh, mat));
+        }
+
+        return renderMesh;
+    }
+
+    public void Dispose()
+    {
+        foreach (var rm in _cache.Values)
+        {
+            rm.Dispose();
+        }
+        _cache.Clear();
+    }
+}

@@ -1,0 +1,100 @@
+"InstallScript"
+{
+	"Run Process"
+	{
+		"DirectPlay 10-64"
+		{
+			"HasRunKey"		"HKEY_LOCAL_MACHINE\\SOFTWARE\\Valve\\Steam\\Apps\\2000770"
+			"Process 1"		"%SYSTEMROOT%\\SysWOW64\\DISM.EXE"
+			"Command 1"		"/Online /enable-feature /FeatureName:DirectPlay /all /NoRestart"
+			"Requirement_OS"
+			{
+				"OSType"		"Windows 10"
+				"Is64BitWindows"		"1"
+			}
+		}
+		"DirectPlay 11-64"
+		{
+			"HasRunKey"		"HKEY_LOCAL_MACHINE\\SOFTWARE\\Valve\\Steam\\Apps\\2000770"
+			"Process 1"		"%SYSTEMROOT%\\SysWOW64\\DISM.EXE"
+			"Command 1"		"/Online /enable-feature /FeatureName:DirectPlay /all /NoRestart"
+			"Requirement_OS"
+			{
+				"OSType"		"Windows 11"
+				"Is64BitWindows"		"1"
+			}
+		}
+		"DirectPlay 10-32"
+		{
+			"HasRunKey"		"HKEY_LOCAL_MACHINE\\SOFTWARE\\Valve\\Steam\\Apps\\2000770"
+			"Process 1"		"%SYSTEMROOT%\\System32\\DISM.EXE"
+			"Command 1"		"/Online /enable-feature /FeatureName:DirectPlay /all /NoRestart"
+			"Requirement_OS"
+			{
+				"OSType"		"Windows 10"
+				"Is64BitWindows"		"0"
+			}
+		}
+		"AppCompat 10-64"
+		{
+			"HasRunKey"		"HKEY_CURRENT_USER\\SOFTWARE\\Valve\\Steam\\Apps\\2000770"
+			"Process 1"		"%SYSTEMROOT%\\SysWOW64\\REG.EXE"
+			"Command 1"		"ADD \"HKCU\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers\" /v \"%INSTALLDIR%\\bin\\player.exe\" /t REG_SZ /d \"HIGHDPIAWARE\" /f"
+			"MinimumHasRunValue"		"3"
+			"Requirement_OS"
+			{
+				"OSType"		"Windows 10"
+				"Is64BitWindows"		"1"
+			}
+		}
+		"AppCompat 11-64"
+		{
+			"HasRunKey"		"HKEY_CURRENT_USER\\SOFTWARE\\Valve\\Steam\\Apps\\2000770"
+			"Process 1"		"%SYSTEMROOT%\\SysWOW64\\REG.EXE"
+			"Command 1"		"ADD \"HKCU\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers\" /v \"%INSTALLDIR%\\bin\\player.exe\" /t REG_SZ /d \"HIGHDPIAWARE\" /f"
+			"MinimumHasRunValue"		"3"
+			"Requirement_OS"
+			{
+				"OSType"		"Windows 11"
+				"Is64BitWindows"		"1"
+			}
+		}
+		"AppCompat 10-32"
+		{
+			"HasRunKey"		"HKEY_CURRENT_USER\\SOFTWARE\\Valve\\Steam\\Apps\\2000770"
+			"Process 1"		"%SYSTEMROOT%\\System32\\REG.EXE"
+			"Command 1"		"ADD \"HKCU\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers\" /v \"%INSTALLDIR%\\bin\\player.exe\" /t REG_SZ /d \"HIGHDPIAWARE\" /f"
+			"MinimumHasRunValue"		"3"
+			"Requirement_OS"
+			{
+				"OSType"		"Windows 10"
+				"Is64BitWindows"		"0"
+			}
+		}
+		"User Settings Init"
+		{
+			"HasRunKey"		"HKEY_CURRENT_USER\\SOFTWARE\\Valve\\Steam\\Apps\\2000770"
+			"Process 1"		"%INSTALLDIR%\\Appsettings.bat"
+			"Command 1"		""
+			"AsCurrentUser"		"1"
+			"MinimumHasRunValue"		"4"
+		}
+	}
+	"Registry"
+	{
+		"HKEY_LOCAL_MACHINE\\SOFTWARE\\Ballance\\Settings"
+		{
+			"string"
+			{
+				"SetupCommand"		"."
+				"SrcDir"		"."
+				"SrcDisk"		"C:"
+				"TargetDir"		"%INSTALLDIR%"
+			}
+		}
+	}
+}
+"kvsignatures"
+{
+	"InstallScript"		"686facb69d1351c6775b527d4edd15c8a0e09e926ee2cbeb858e156947b994db965059c630c73dd8b0639397450b6e5e208f8fc6af14577e7416f6e112fec9899dc995cc32f8f4b1373447e952caa534412a77bcaae5f0b3b6e83f9eb7e24c8d6952bfdaf8953e690f2fd48e7d31fec7110e22741e8ffcefba4d4fbdeaaa7599"
+}
