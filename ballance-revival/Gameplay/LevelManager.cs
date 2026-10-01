@@ -27,6 +27,7 @@ public class LevelManager
 
     private Texture2D _flameTex;
     private Texture2D _pointTex;
+    private readonly List<(Prefab Prefab, Matrix4x4 World)> _flameQueue = [];
 
     public int CurrentLevelNumber { get; private set; } = 1;
     public int Score { get; private set; } = 1000;
@@ -52,7 +53,7 @@ public class LevelManager
         _hud = hud;
 
         Prefabs = new PrefabLibrary(Path.Combine(_gameRoot, "3D Entities", "PH"), textureManager);
-        _flameTex = Billboard.LoadMasked(Path.Combine(_gameRoot, "Textures", "Particle_Flames.bmp"));
+        _flameTex = Billboard.LoadMasked(Path.Combine(_gameRoot, "Textures", "Particle_Flames.bmp"), keepColor: true);
         _pointTex = Billboard.LoadMasked(Path.Combine(_gameRoot, "Textures", "ExtraParticle.bmp"));
         LoadBallMeshes();
         Player = new BallPlayer(Vector3.Zero, BallMaterial.Wood);
@@ -334,6 +335,8 @@ public class LevelManager
     {
         if (CurrentRenderer == null || CurrentLevel == null) return;
 
+        _flameQueue.Clear();
+
         foreach (var entity in CurrentLevel.AllRenderables)
         {
             if (!CurrentLevel.Placeholders.TryGetValue(entity, out string? group))
@@ -391,21 +394,37 @@ public class LevelManager
         }
 
         DrawPlayerBall();
+        DrawQueuedFlames(cameraPos, time);
     }
 
     private void DrawFlames(Prefab prefab, Matrix4x4 world, Vector3 cameraPos, float time)
     {
         if (prefab.FlamePoints.Count == 0 || _flameTex.Id == 0) return;
+        _flameQueue.Add((prefab, world));
+    }
 
+    private void DrawQueuedFlames(Vector3 cameraPos, float time)
+    {
+        if (_flameQueue.Count == 0 || _flameTex.Id == 0) return;
+
+        // Draw after the level so the black color key does not hide geometry,
+        // and do not write depth or the quad still occludes whatever is behind it.
+        Rlgl.DrawRenderBatchActive();
+        Rlgl.DisableDepthMask();
         Raylib.BeginBlendMode(BlendMode.Additive);
-        foreach (var local in prefab.FlamePoints)
+        foreach (var (prefab, world) in _flameQueue)
         {
-            Vector3 p = Vector3.Transform(local, world) + new Vector3(0f, 0.6f, 0f);
-            float flick = 0.82f + 0.18f * MathF.Sin(time * 11f + p.X * 0.7f);
-            Billboard.Draw(_flameTex, p, cameraPos, 2.4f * flick, 3.6f, new Color((byte)255, (byte)236, (byte)190, (byte)230));
-            Billboard.Draw(_flameTex, p + new Vector3(0f, 1.5f, 0f), cameraPos, 1.5f * flick, 2.8f, new Color((byte)255, (byte)250, (byte)230, (byte)180));
+            foreach (var local in prefab.FlamePoints)
+            {
+                Vector3 p = Vector3.Transform(local, world) + new Vector3(0f, 0.6f, 0f);
+                float flick = 0.82f + 0.18f * MathF.Sin(time * 11f + p.X * 0.7f);
+                Billboard.Draw(_flameTex, p, cameraPos, 2.4f * flick, 3.6f, new Color((byte)255, (byte)210, (byte)230, (byte)210));
+                Billboard.Draw(_flameTex, p + new Vector3(0f, 1.5f, 0f), cameraPos, 1.5f * flick, 2.8f, new Color((byte)255, (byte)230, (byte)240, (byte)150));
+            }
         }
         Raylib.EndBlendMode();
+        Rlgl.DrawRenderBatchActive();
+        Rlgl.EnableDepthMask();
     }
 
     private static string PrefabKey(string entityName)

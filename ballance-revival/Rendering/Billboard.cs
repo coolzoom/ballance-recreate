@@ -9,7 +9,7 @@ namespace BallanceRevival.Rendering;
 /// </summary>
 public static unsafe class Billboard
 {
-    public static Texture2D LoadMasked(string path)
+    public static Texture2D LoadMasked(string path, bool keepColor = false)
     {
         if (!ImageDecoder.TryLoad(path, out Image img))
             return default;
@@ -20,9 +20,14 @@ public static unsafe class Billboard
         {
             byte r = p[i * 4 + 0], g = p[i * 4 + 1], b = p[i * 4 + 2];
             byte a = Math.Max(r, Math.Max(g, b));
-            p[i * 4 + 0] = 255;
-            p[i * 4 + 1] = 255;
-            p[i * 4 + 2] = 255;
+            // The source is a bright shape on black. Black is the color key, not a dark flame.
+            if (a < 8) a = 0;
+            if (!keepColor)
+            {
+                p[i * 4 + 0] = 255;
+                p[i * 4 + 1] = 255;
+                p[i * 4 + 2] = 255;
+            }
             p[i * 4 + 3] = a;
         }
 
