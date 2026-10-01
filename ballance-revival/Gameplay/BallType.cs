@@ -14,12 +14,15 @@ public class BallProperties
     public BallMaterial Material { get; init; }
     public string Name { get; init; } = "Wood";
     public float Radius { get; init; } = 2.0f;
-    public float Mass { get; init; } = 10.0f;
-    public float Acceleration { get; init; } = 32.0f;
-    public float MaxSpeed { get; init; } = 35.0f;
-    public float Friction { get; init; } = 0.88f;
+    public float Mass { get; init; } = 1.9f;
+    /// <summary>Player push, in units per second squared. Heavier balls get less of this.</summary>
+    public float Acceleration { get; init; } = 36.0f;
+    public float MaxSpeed { get; init; } = 36.0f;
+    /// <summary>How fast a free roll slows down, per second. Paper sheds speed; stone keeps it.</summary>
+    public float LinearDamp { get; init; } = 0.2f;
+    /// <summary>Rolling resistance on the ground, in units per second squared.</summary>
+    public float RollingResistance { get; init; } = 6.0f;
     public float Restitution { get; init; } = 0.25f;
-    public float AirDrag { get; init; } = 0.995f;
     public float SlopeClimbLimit { get; init; } = 0.7f;
     public bool CanBeLiftedByWind { get; init; } = false;
     public string TextureName { get; init; } = "Ball_Wood.bmp";
@@ -30,12 +33,12 @@ public class BallProperties
         Material = BallMaterial.Wood,
         Name = "Wood Ball",
         Radius = 2.0f,
-        Mass = 10.0f,
-        Acceleration = 32.0f,
-        MaxSpeed = 35.0f,
-        Friction = 0.88f,
-        Restitution = 0.25f,
-        AirDrag = 0.995f,
+        Mass = 1.9f,
+        Acceleration = 36.0f,
+        MaxSpeed = 36.0f,
+        LinearDamp = 0.22f,
+        RollingResistance = 5.5f,
+        Restitution = 0.28f,
         SlopeClimbLimit = 0.75f,
         CanBeLiftedByWind = false,
         TextureName = "Ball_Wood.bmp",
@@ -47,13 +50,13 @@ public class BallProperties
         Material = BallMaterial.Stone,
         Name = "Stone Ball",
         Radius = 2.0f,
-        Mass = 35.0f,
-        Acceleration = 20.0f,
-        MaxSpeed = 45.0f,
-        Friction = 0.92f,
-        Restitution = 0.08f,
-        AirDrag = 0.998f,
-        SlopeClimbLimit = 0.45f,
+        Mass = 10.0f,
+        Acceleration = 14.0f,
+        MaxSpeed = 52.0f,
+        LinearDamp = 0.06f,
+        RollingResistance = 2.0f,
+        Restitution = 0.05f,
+        SlopeClimbLimit = 0.42f,
         CanBeLiftedByWind = false,
         TextureName = "Ball_Stone.bmp",
         MeshName = "Ball_Stone_HighRes_Mesh"
@@ -64,12 +67,12 @@ public class BallProperties
         Material = BallMaterial.Paper,
         Name = "Paper Ball",
         Radius = 2.0f,
-        Mass = 1.2f,
-        Acceleration = 48.0f,
-        MaxSpeed = 30.0f,
-        Friction = 0.75f,
-        Restitution = 0.15f,
-        AirDrag = 0.985f,
+        Mass = 0.2f,
+        Acceleration = 55.0f,
+        MaxSpeed = 26.0f,
+        LinearDamp = 0.9f,
+        RollingResistance = 9.0f,
+        Restitution = 0.12f,
         SlopeClimbLimit = 0.95f,
         CanBeLiftedByWind = true,
         TextureName = "Ball_Paper.bmp",

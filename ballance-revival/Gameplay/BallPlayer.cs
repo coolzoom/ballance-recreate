@@ -17,7 +17,9 @@ public class BallPlayer
     public Vector3 LastContactNormal { get; private set; } = Vector3.UnitY;
     public float LastImpactSpeed { get; private set; }
 
-    public const float Gravity = -38.0f;
+    // Gameplay.nmo "Set Physics Globals": gravity (0, -20, 0), physics time factor 2.
+    // The factor runs the solver at double rate, so one real second falls like -40.
+    public const float Gravity = -20.0f * 2.0f;
 
     public BallPlayer(Vector3 spawnPosition, BallMaterial material = BallMaterial.Wood)
     {
@@ -106,12 +108,9 @@ public class BallPlayer
             }
         }
 
-        // Apply air drag
-        Velocity = new Vector3(
-            Velocity.X * Properties.AirDrag,
-            Velocity.Y,
-            Velocity.Z * Properties.AirDrag
-        );
+        // Light speed dampening from the original physicalize block (0.1), stronger on paper.
+        float damp = MathF.Exp(-Properties.LinearDamp * dt);
+        Velocity = new Vector3(Velocity.X * damp, Velocity.Y, Velocity.Z * damp);
 
         // Limit maximum horizontal speed
         Vector2 horizVel = new Vector2(Velocity.X, Velocity.Z);
@@ -147,10 +146,15 @@ public class BallPlayer
                 Vector3 normalImpulse = -normal * normalVel * (1.0f + bounce);
                 Velocity += normalImpulse;
 
-                // Friction along tangential velocity
+                // Rolling resistance. This must stay well below the drive force,
+                // otherwise the ball never gathers speed and will not roll downhill.
                 Vector3 tangentVel = Velocity - normal * Vector3.Dot(Velocity, normal);
-                float frictionAmount = MathF.Min(1.0f, Properties.Friction * 12.0f * dt);
-                Velocity -= tangentVel * frictionAmount;
+                float tangentSpeed = tangentVel.Length();
+                if (tangentSpeed > 1e-4f)
+                {
+                    float drop = MathF.Min(tangentSpeed, Properties.RollingResistance * dt);
+                    Velocity -= tangentVel * (drop / tangentSpeed);
+                }
 
                 // Drive angular velocity to match rolling without slip
                 Vector3 targetAngVel = Vector3.Cross(normal, Velocity) / Properties.Radius;
