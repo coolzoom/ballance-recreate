@@ -39,14 +39,15 @@ public class NmoEntity
                 float m20 = c.ReadFloat(), m21 = c.ReadFloat(), m22 = c.ReadFloat();
                 float m30 = c.ReadFloat(), m31 = c.ReadFloat(), m32 = c.ReadFloat();
 
+                // S * M * S with S = diag(1, 1, -1): same Z mirror as applied to mesh vertices
                 entity.WorldMatrix = new Matrix4x4(
-                    m00, m01, m02, 0f,
-                    m10, m11, m12, 0f,
-                    m20, m21, m22, 0f,
-                    m30, m31, m32, 1f
+                    m00, m01, -m02, 0f,
+                    m10, m11, -m12, 0f,
+                    -m20, -m21, m22, 0f,
+                    m30, m31, -m32, 1f
                 );
 
-                entity.Position = new Vector3(m30, m31, m32);
+                entity.Position = new Vector3(m30, m31, -m32);
             }
         }
 

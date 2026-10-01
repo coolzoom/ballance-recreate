@@ -17,13 +17,15 @@ public unsafe class RenderSubmesh : IDisposable
 
     public void Draw(Matrix4x4 transform)
     {
-        Raylib.DrawMesh(Mesh, Material, transform);
+        // Raylib-cs expects translation in M14 (column-vector layout), System.Numerics stores it in M41
+        Raylib.DrawMesh(Mesh, Material, Matrix4x4.Transpose(transform));
     }
 
     public void Dispose()
     {
         Raylib.UnloadMesh(Mesh);
-        Raylib.UnloadMaterial(Material);
+        // UnloadMaterial would also unload the shared shader and textures; only free the map array
+        Raylib.MemFree(Material.Maps);
     }
 }
 
@@ -147,6 +149,7 @@ public unsafe class MeshRenderer : IDisposable
             Raylib.UploadMesh(ref mesh, false);
 
             Material mat = Raylib.LoadMaterialDefault();
+            if (LitShader.Shader.Id != 0) mat.Shader = LitShader.Shader;
 
             // Resolve material texture and tint
             Color tint = Color.White;
@@ -160,11 +163,15 @@ public unsafe class MeshRenderer : IDisposable
                 byte g = (byte)((argb >> 8) & 0xFF);
                 byte b = (byte)(argb & 0xFF);
                 if (a == 0) a = 255;
-                tint = new Color(r, g, b, a);
 
                 if (_level.Textures.TryGetValue((int)nmoMat.TextureObjectIndex, out var nmoTex))
                 {
                     texture = _textureManager.GetTexture(nmoTex.FileName);
+                    tint = new Color((byte)255, (byte)255, (byte)255, a);
+                }
+                else
+                {
+                    tint = new Color(r, g, b, a);
                 }
             }
 

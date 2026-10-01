@@ -68,9 +68,15 @@ public class TextureManager : IDisposable
 
         if (filePath != null && File.Exists(filePath))
         {
-            Texture2D tex = Raylib.LoadTexture(filePath);
+            Texture2D tex = default;
+            if (ImageDecoder.TryLoad(filePath, out Image img))
+            {
+                tex = Raylib.LoadTextureFromImage(img);
+                Raylib.UnloadImage(img);
+            }
             if (tex.Id > 0)
             {
+                Raylib.GenTextureMipmaps(ref tex);
                 Raylib.SetTextureFilter(tex, TextureFilter.Trilinear);
                 Raylib.SetTextureWrap(tex, TextureWrap.Repeat);
                 _textures[name] = tex;

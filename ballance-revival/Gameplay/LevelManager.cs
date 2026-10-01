@@ -20,9 +20,10 @@ public class LevelManager
     public TriangleMeshCollider Collider { get; private set; } = new();
     public BallPlayer Player { get; private set; }
 
-    public NmoMesh? BallWoodMesh { get; private set; }
-    public NmoMesh? BallStoneMesh { get; private set; }
-    public NmoMesh? BallPaperMesh { get; private set; }
+    public PrefabLibrary Prefabs { get; }
+    private Prefab? _ballWood;
+    private Prefab? _ballStone;
+    private Prefab? _ballPaper;
 
     public int CurrentLevelNumber { get; private set; } = 1;
     public int Score { get; private set; } = 1000;
@@ -47,6 +48,7 @@ public class LevelManager
         _particles = particles;
         _hud = hud;
 
+        Prefabs = new PrefabLibrary(Path.Combine(_gameRoot, "3D Entities", "PH"), textureManager);
         LoadBallMeshes();
         Player = new BallPlayer(Vector3.Zero, BallMaterial.Wood);
         LoadLevel(1);
@@ -55,22 +57,25 @@ public class LevelManager
     private void LoadBallMeshes()
     {
         string ballsPath = Path.Combine(_gameRoot, "3D Entities", "Balls.nmo");
-        if (File.Exists(ballsPath))
+        if (!File.Exists(ballsPath)) return;
+
+        var balls = NmoLevel.Load(ballsPath);
+        // Ball entities sit at arbitrary positions in Balls.nmo; strip translation so they draw at the origin
+        Prefab Make(string entityName)
         {
-            var ballsFile = NmoFile.Load(ballsPath);
-            foreach (var obj in ballsFile.Objects)
+            var prefab = new Prefab(balls, _textureManager, e => e.Name == entityName);
+            foreach (var part in prefab.Parts)
             {
-                if (obj.ClassId == 32)
-                {
-                    if (obj.Name == "Ball_Wood_Mesh")
-                        BallWoodMesh = NmoMesh.FromObject(obj);
-                    else if (obj.Name == "Ball_Stone_HighRes_Mesh" || obj.Name == "Ball_Stone_Mesh")
-                        BallStoneMesh ??= NmoMesh.FromObject(obj);
-                    else if (obj.Name == "Ball_Paper_Mesh")
-                        BallPaperMesh = NmoMesh.FromObject(obj);
-                }
+                var m = part.WorldMatrix;
+                m.Translation = Vector3.Zero;
+                part.WorldMatrix = m;
             }
+            return prefab;
         }
+
+        _ballWood = Make("Ball_Wood");
+        _ballStone = Make("Ball_Stone");
+        _ballPaper = Make("Ball_Paper");
     }
 
     public void LoadLevel(int levelNum)
@@ -274,10 +279,10 @@ public class LevelManager
             box.Update(dt, Player);
         }
 
-        // Check Goal (End Dome or Balloon)
+        // Check goal (PE_Balloon UFO platform)
         if (!IsLevelComplete)
         {
-            Vector3? goalPos = CurrentLevel?.EndDome?.Position ?? CurrentLevel?.EndBalloon?.Position;
+            Vector3? goalPos = CurrentLevel?.EndBalloon?.Position;
             if (goalPos.HasValue && Vector3.Distance(Player.Position, goalPos.Value) < 7.0f)
             {
                 IsLevelComplete = true;
@@ -324,54 +329,74 @@ public class LevelManager
     {
         if (CurrentRenderer == null || CurrentLevel == null) return;
 
-        // 1. Draw static level geometry
+        // 1. Static level geometry; PH placeholders are replaced by their prefab models
         foreach (var entity in CurrentLevel.AllRenderables)
         {
-            // Skip dynamic elements drawn separately
-            string name = entity.Name;
-            if (name.StartsWith("P_Extra") || name.StartsWith("P_Box") || name.StartsWith("P_Ball_"))
+            if (!CurrentLevel.Placeholders.TryGetValue(entity, out string? group))
+            {
+                CurrentRenderer.DrawEntity(entity);
                 continue;
+            }
 
-            CurrentRenderer.DrawEntity(entity);
+            if (group is "P_Extra_Point" or "P_Extra_Life" or "P_Box")
+                continue; // dynamic, drawn below
+
+            Prefabs.Get(group)?.Draw(entity.WorldMatrix);
         }
 
-        // 2. Draw Pickups (spinning crystals)
+        // 2. Pickups
         foreach (var pickup in Pickups)
         {
-            if (pickup.IsCollected || pickup.Entity?.Mesh == null) continue;
+            if (pickup.IsCollected || pickup.Entity == null) continue;
 
-            Matrix4x4 mat = Matrix4x4.CreateRotationY(pickup.SpinAngle * (MathF.PI / 180f)) *
-                            Matrix4x4.CreateTranslation(pickup.CurrentPosition);
-            CurrentRenderer.DrawMesh(pickup.Entity.Mesh, mat);
+            Matrix4x4 world = pickup.Entity.WorldMatrix;
+            world.Translation = pickup.CurrentPosition;
+            world = Matrix4x4.CreateRotationY(pickup.SpinAngle * (MathF.PI / 180f)) * world;
+
+            string group = pickup.Type == PickupType.Point ? "P_Extra_Point" : "P_Extra_Life";
+            Prefabs.Get(group)?.Draw(world);
+
+            if (pickup.Type == PickupType.Point)
+            {
+                // The point orbs are sprites/particles in the original; approximate them with small spheres
+                float a = pickup.SpinAngle * (MathF.PI / 180f);
+                for (int i = 0; i < 4; i++)
+                {
+                    float t = a + i * MathF.PI / 2f;
+                    var p = pickup.CurrentPosition + new Vector3(MathF.Cos(t) * 1.2f, 0f, MathF.Sin(t) * 1.2f);
+                    Raylib.DrawSphere(p, 0.35f, new Color(120, 200, 255, 255));
+                }
+            }
         }
 
-        // 3. Draw Boxes
+        // 3. Boxes
         foreach (var box in Boxes)
         {
-            if (box.Entity?.Mesh == null) continue;
-            Matrix4x4 mat = Matrix4x4.CreateTranslation(box.Position);
-            CurrentRenderer.DrawMesh(box.Entity.Mesh, mat);
+            if (box.Entity == null) continue;
+            Matrix4x4 world = box.Entity.WorldMatrix;
+            world.Translation = box.Position;
+            Prefabs.Get("P_Box")?.Draw(world);
         }
 
-        // 4. Draw Player Ball
+        // 4. Player ball
         DrawPlayerBall();
     }
 
     private void DrawPlayerBall()
     {
-        NmoMesh? ballMesh = Player.CurrentMaterial switch
+        Prefab? ball = Player.CurrentMaterial switch
         {
-            BallMaterial.Stone => BallStoneMesh,
-            BallMaterial.Paper => BallPaperMesh,
-            _ => BallWoodMesh
+            BallMaterial.Stone => _ballStone,
+            BallMaterial.Paper => _ballPaper,
+            _ => _ballWood
         };
 
         Matrix4x4 ballMatrix = Matrix4x4.CreateFromQuaternion(Player.Rotation) *
                                Matrix4x4.CreateTranslation(Player.Position);
 
-        if (ballMesh != null && CurrentRenderer != null)
+        if (ball != null && ball.Parts.Count > 0)
         {
-            CurrentRenderer.DrawMesh(ballMesh, ballMatrix);
+            ball.Draw(ballMatrix);
         }
         else
         {

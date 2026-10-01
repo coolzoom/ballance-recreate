@@ -21,7 +21,9 @@ public static class Program
             return;
         }
 
-        using var engine = new GameEngine(gameRoot, 1280, 720);
+        string? shot = args.Length > 1 && args[0] == "--shot" ? Path.GetFullPath(args[1]) : null;
+        int startLevel = args.Length > 2 && int.TryParse(args[2], out int lv) ? Math.Clamp(lv, 1, 12) : 1;
+        using var engine = new GameEngine(gameRoot, 1280, 720) { ScreenshotPath = shot, StartLevel = startLevel };
         engine.Run();
     }
 

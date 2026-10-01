@@ -26,6 +26,9 @@ public class NmoLevel
     public List<NmoEntity> BoxEntities { get; } = [];
     public List<NmoEntity> PuzzleBallEntities { get; } = [];
 
+    /// <summary>Placeholder entities of PH groups (P_*, PS_*, PC_*, PE_*, PR_*) mapped to their group name.</summary>
+    public Dictionary<NmoEntity, string> Placeholders { get; } = [];
+
     public NmoEntity? StartPoint { get; set; }
     public NmoEntity? EndDome { get; set; }
     public NmoEntity? EndBalloon { get; set; }
@@ -108,6 +111,13 @@ public class NmoLevel
             }
         }
 
+        foreach (var (groupName, members) in Groups)
+        {
+            if (!IsPrefabGroup(groupName)) continue;
+            foreach (var m in members)
+                Placeholders[m] = groupName;
+        }
+
         // 6. Categorize gameplay entities
         CategorizeEntities();
     }
@@ -164,12 +174,17 @@ public class NmoLevel
         if (Groups.TryGetValue("PE_Levelende", out var balloons) && balloons.Count > 0)
             EndBalloon = balloons[0];
 
+        var hidden = new HashSet<NmoEntity>();
+        foreach (var g in new[] { "DepthTestCubes", "invisible" })
+            if (Groups.TryGetValue(g, out var members)) hidden.UnionWith(members);
+
         // Fallbacks by entity name if groups were incomplete
         foreach (var entity in Entities.Values)
         {
             string name = entity.Name;
-            if (name.StartsWith("Quader") || name.StartsWith("SkyLayer"))
-                continue; // Depth test cubes or skybox billboard
+            if (hidden.Contains(entity) || name.StartsWith("Quader") ||
+                name.StartsWith("DepthTestCube") || name.StartsWith("SkyLayer"))
+                continue;
 
             if (entity.Mesh != null)
             {
@@ -210,6 +225,10 @@ public class NmoLevel
         ResetPointEntities.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
         CheckpointEntities.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase));
     }
+
+    private static bool IsPrefabGroup(string name) =>
+        name.StartsWith("P_") || name.StartsWith("PS_") || name.StartsWith("PC_") ||
+        name.StartsWith("PE_") || name.StartsWith("PR_");
 
     public static NmoLevel Load(string path)
     {

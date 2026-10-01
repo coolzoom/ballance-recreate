@@ -72,7 +72,8 @@ public class NmoMesh
                 int v1 = (int)(w1 >> 16);
                 int v2 = (int)(w2 & 0xFFFF);
                 int mat = (int)(w2 >> 16);
-                mesh.Faces.Add(new NmoFace(v0, v1, v2, mat));
+                // Swap V1/V2 so faces are CCW-front in the Z-mirrored (right-handed) space
+                mesh.Faces.Add(new NmoFace(v0, v2, v1, mat));
             }
         }
 
@@ -86,7 +87,8 @@ public class NmoMesh
             mesh.Positions = new Vector3[vertCount];
             for (int i = 0; i < vertCount; i++)
             {
-                mesh.Positions[i] = new Vector3(c.ReadFloat(), c.ReadFloat(), c.ReadFloat());
+                // Virtools is left-handed; mirror Z to get right-handed OpenGL space
+                mesh.Positions[i] = new Vector3(c.ReadFloat(), c.ReadFloat(), -c.ReadFloat());
             }
 
             bool hasNormals = (flags & 4) == 0;
@@ -95,22 +97,23 @@ public class NmoMesh
                 mesh.Normals = new Vector3[vertCount];
                 for (int i = 0; i < vertCount; i++)
                 {
-                    mesh.Normals[i] = new Vector3(c.ReadFloat(), c.ReadFloat(), c.ReadFloat());
+                    mesh.Normals[i] = new Vector3(c.ReadFloat(), c.ReadFloat(), -c.ReadFloat());
                 }
             }
 
-            bool hasUVs = (flags & 8) == 0;
-            if (hasUVs)
+            mesh.TexCoords = new Vector2[vertCount];
+            bool sharedUV = (flags & 8) != 0;
+            if (sharedUV)
             {
-                mesh.TexCoords = new Vector2[vertCount];
+                var uv = new Vector2(c.ReadFloat(), c.ReadFloat());
+                Array.Fill(mesh.TexCoords, uv);
+            }
+            else
+            {
                 for (int i = 0; i < vertCount; i++)
                 {
                     mesh.TexCoords[i] = new Vector2(c.ReadFloat(), c.ReadFloat());
                 }
-            }
-            else
-            {
-                mesh.TexCoords = new Vector2[vertCount];
             }
 
             // If no normals, generate smooth normals from face geometry
@@ -163,10 +166,9 @@ public class NmoMesh
                 mesh.Submeshes.Add(submesh);
             }
 
-            // Direct3D (CW) to OpenGL/Raylib (CCW): V0, V2, V1
             submesh.Indices.Add((ushort)face.V0);
-            submesh.Indices.Add((ushort)face.V2);
             submesh.Indices.Add((ushort)face.V1);
+            submesh.Indices.Add((ushort)face.V2);
         }
 
         return mesh;

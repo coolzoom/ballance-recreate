@@ -21,6 +21,9 @@ public class GameEngine : IDisposable
 
     private float _totalTime = 0f;
 
+    public string? ScreenshotPath { get; init; }
+    public int StartLevel { get; init; } = 1;
+
     public GameEngine(string gameRoot, int width = 1280, int height = 720)
     {
         _gameRoot = Path.GetFullPath(gameRoot);
@@ -37,6 +40,7 @@ public class GameEngine : IDisposable
         string texturesDir = Path.Combine(_gameRoot, "Textures");
         string soundsDir = Path.Combine(_gameRoot, "Sounds");
 
+        LitShader.Load();
         _textureManager = new TextureManager(texturesDir);
         _audioManager = new AudioManager(soundsDir);
         _skybox = new SkyboxRenderer(_textureManager);
@@ -44,10 +48,12 @@ public class GameEngine : IDisposable
         _hud = new GameHUD();
 
         _levelManager = new LevelManager(_gameRoot, _textureManager, _audioManager, _particles, _hud);
+        if (StartLevel > 1) _levelManager.LoadLevel(StartLevel);
         _camera = new Camera3DController(_levelManager.Player.Position);
 
         UpdateSkyTheme(_levelManager.CurrentLevelNumber);
 
+        int frame = 0;
         while (!Raylib.WindowShouldClose())
         {
             float dt = MathF.Min(Raylib.GetFrameTime(), 0.05f);
@@ -56,6 +62,14 @@ public class GameEngine : IDisposable
             ProcessInput(dt);
             Update(dt);
             Render();
+
+            if (ScreenshotPath != null && ++frame == 120)
+            {
+                Image img = Raylib.LoadImageFromScreen();
+                Raylib.ExportImage(img, ScreenshotPath);
+                Raylib.UnloadImage(img);
+                break;
+            }
         }
 
         Dispose();
@@ -201,6 +215,8 @@ public class GameEngine : IDisposable
         _audioManager?.Dispose();
         _skybox?.Dispose();
         _levelManager?.CurrentRenderer?.Dispose();
+        _levelManager?.Prefabs.Dispose();
+        LitShader.Unload();
 
         if (Raylib.IsWindowReady())
         {
