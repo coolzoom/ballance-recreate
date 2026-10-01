@@ -7,6 +7,7 @@ public class SkyboxRenderer : IDisposable
 {
     private readonly TextureManager _textureManager;
     private Texture2D _front, _back, _left, _right, _down;
+    public Vector3 FogColor { get; private set; } = new(0.86f, 0.62f, 0.68f);
 
     public SkyboxRenderer(TextureManager textureManager)
     {
@@ -21,6 +22,7 @@ public class SkyboxRenderer : IDisposable
         _left = Load($"sky/{prefix}_Left.bmp");
         _right = Load($"sky/{prefix}_Right.bmp");
         _down = Load($"sky/{prefix}_Down.bmp");
+        FogColor = _textureManager.AverageColor($"sky/{prefix}_Front.bmp");
     }
 
     private Texture2D Load(string name)

@@ -12,6 +12,7 @@ public class Prefab : IDisposable
     public NmoLevel Source { get; }
     public MeshRenderer Renderer { get; }
     public List<NmoEntity> Parts { get; } = [];
+    public List<Vector3> FlamePoints { get; } = [];
 
     public Prefab(NmoLevel source, TextureManager textures, Func<NmoEntity, bool>? filter = null)
     {
@@ -21,6 +22,17 @@ public class Prefab : IDisposable
         {
             if (e.Mesh != null && (filter == null || filter(e)))
                 Parts.Add(e);
+        }
+
+        foreach (var obj in source.RawFile.Objects)
+        {
+            if (obj.ClassId != 33 || obj.Chunk == null) continue;
+            if (!obj.Name.Contains("Flame", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!obj.Chunk.Seek(0x100000)) continue;
+            obj.Chunk.ReadUInt32();
+            obj.Chunk.ReadUInt32();
+            for (int i = 0; i < 9; i++) obj.Chunk.ReadFloat();
+            FlamePoints.Add(new Vector3(obj.Chunk.ReadFloat(), obj.Chunk.ReadFloat(), -obj.Chunk.ReadFloat()));
         }
     }
 
@@ -47,7 +59,7 @@ public class PrefabLibrary : IDisposable
             try
             {
                 var prefab = new Prefab(NmoLevel.Load(file), textures, e => !IsHelperPart(e.Name));
-                if (prefab.Parts.Count > 0)
+                if (prefab.Parts.Count > 0 || prefab.FlamePoints.Count > 0)
                     _prefabs[name] = prefab;
                 else
                     prefab.Dispose();

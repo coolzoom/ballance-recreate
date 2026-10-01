@@ -49,7 +49,7 @@ public class GameEngine : IDisposable
 
         _levelManager = new LevelManager(_gameRoot, _textureManager, _audioManager, _particles, _hud);
         if (StartLevel > 1) _levelManager.LoadLevel(StartLevel);
-        _camera = new Camera3DController(_levelManager.Player.Position);
+        AimCamera();
 
         UpdateSkyTheme(_levelManager.CurrentLevelNumber);
 
@@ -63,7 +63,7 @@ public class GameEngine : IDisposable
             Update(dt);
             Render();
 
-            if (ScreenshotPath != null && ++frame == 120)
+            if (ScreenshotPath != null && ++frame == 20)
             {
                 Image img = Raylib.LoadImageFromScreen();
                 Raylib.ExportImage(img, ScreenshotPath);
@@ -102,7 +102,7 @@ public class GameEngine : IDisposable
             if (Raylib.IsKeyPressed((KeyboardKey)((int)KeyboardKey.One + (i - 1))))
             {
                 _levelManager.LoadLevel(i);
-                _camera = new Camera3DController(_levelManager.Player.Position);
+                AimCamera();
                 UpdateSkyTheme(i);
                 break;
             }
@@ -167,11 +167,13 @@ public class GameEngine : IDisposable
         // 3D Scene Rendering
         Raylib.BeginMode3D(_camera.Camera);
 
+        LitShader.SetFog(_camera.Camera.Position, _skybox.FogColor, 0.0045f);
+
         // 1. Skybox
         _skybox.Draw(_camera.Camera.Position);
 
         // 2. Track & Objects
-        _levelManager.DrawLevel();
+        _levelManager.DrawLevel(_camera.Camera.Position, _totalTime);
 
         // 3. Particles
         _particles.Draw();
@@ -207,6 +209,15 @@ public class GameEngine : IDisposable
             _ => "Sky_F"
         };
         _skybox.SetTheme(theme);
+    }
+
+    private void AimCamera()
+    {
+        if (_levelManager == null) return;
+        _camera = new Camera3DController(_levelManager.Player.Position);
+        var resets = _levelManager.CurrentLevel?.ResetPointEntities;
+        if (resets != null && resets.Count >= 2)
+            _camera.LookAlong(resets[1].Position - resets[0].Position);
     }
 
     public void Dispose()

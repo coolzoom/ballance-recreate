@@ -15,10 +15,29 @@ public unsafe class RenderSubmesh : IDisposable
         Material = material;
     }
 
+    public bool Alpha;
+    public bool Additive;
+
     public void Draw(Matrix4x4 transform)
     {
+        if (Alpha)
+        {
+            Rlgl.DrawRenderBatchActive();
+            Rlgl.DisableDepthMask();
+            Rlgl.DisableBackfaceCulling();
+            if (Additive) Raylib.BeginBlendMode(BlendMode.Additive);
+        }
+
         // Raylib-cs expects translation in M14 (column-vector layout), System.Numerics stores it in M41
         Raylib.DrawMesh(Mesh, Material, Matrix4x4.Transpose(transform));
+
+        if (Alpha)
+        {
+            Rlgl.DrawRenderBatchActive();
+            if (Additive) Raylib.EndBlendMode();
+            Rlgl.EnableBackfaceCulling();
+            Rlgl.EnableDepthMask();
+        }
     }
 
     public void Dispose()
@@ -33,11 +52,15 @@ public class RenderMesh : IDisposable
 {
     public List<RenderSubmesh> Submeshes { get; } = [];
 
-    public void Draw(Matrix4x4 transform)
+        public void Draw(Matrix4x4 transform)
     {
         foreach (var submesh in Submeshes)
         {
-            submesh.Draw(transform);
+            if (!submesh.Alpha) submesh.Draw(transform);
+        }
+        foreach (var submesh in Submeshes)
+        {
+            if (submesh.Alpha) submesh.Draw(transform);
         }
     }
 
@@ -155,6 +178,8 @@ public unsafe class MeshRenderer : IDisposable
             Color tint = Color.White;
             Texture2D texture = _textureManager.GetTexture(string.Empty);
 
+            bool alpha = false;
+            bool additive = false;
             if (_level.Materials.TryGetValue((int)submesh.MaterialObjectIndex, out var nmoMat))
             {
                 uint argb = nmoMat.DiffuseColor;
@@ -163,6 +188,8 @@ public unsafe class MeshRenderer : IDisposable
                 byte g = (byte)((argb >> 8) & 0xFF);
                 byte b = (byte)(argb & 0xFF);
                 if (a == 0) a = 255;
+                alpha = nmoMat.AlphaBlend || a < 250;
+                additive = nmoMat.Additive;
 
                 if (_level.Textures.TryGetValue((int)nmoMat.TextureObjectIndex, out var nmoTex))
                 {
@@ -178,7 +205,7 @@ public unsafe class MeshRenderer : IDisposable
             Raylib.SetMaterialTexture(ref mat, MaterialMapIndex.Albedo, texture);
             mat.Maps[(int)MaterialMapIndex.Albedo].Color = tint;
 
-            renderMesh.Submeshes.Add(new RenderSubmesh(mesh, mat));
+            renderMesh.Submeshes.Add(new RenderSubmesh(mesh, mat) { Alpha = alpha, Additive = additive });
         }
 
         return renderMesh;

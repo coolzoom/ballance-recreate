@@ -40,6 +40,15 @@ public class NmoMaterial
     public int ObjectIndex { get; set; }
     public uint DiffuseColor { get; set; } = 0xFFFFFFFF; // ARGB
     public uint TextureObjectIndex { get; set; } = uint.MaxValue;
+    public uint Options { get; set; }
+
+    // Bit 3 of the Virtools material option word selects alpha blending (shadows, fades, glass)
+    public bool AlphaBlend => (Options & 0x8) != 0;
+
+    public bool Additive =>
+        AlphaBlend && Name.Contains("Verlauf", StringComparison.OrdinalIgnoreCase)
+        || Name.Contains("Flash", StringComparison.OrdinalIgnoreCase)
+        || Name.Contains("Glow", StringComparison.OrdinalIgnoreCase);
 
     public static NmoMaterial? FromObject(NmoObject obj)
     {
@@ -59,6 +68,9 @@ public class NmoMaterial
             obj.Chunk.ReadUInt32(); // Emissive
             obj.Chunk.ReadUInt32(); // Shininess float
             mat.TextureObjectIndex = obj.Chunk.ReadUInt32();
+            obj.Chunk.ReadUInt32();
+            obj.Chunk.ReadUInt32();
+            mat.Options = obj.Chunk.ReadUInt32();
         }
 
         return mat;

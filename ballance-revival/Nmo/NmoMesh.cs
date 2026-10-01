@@ -84,14 +84,39 @@ public class NmoMesh
             uint flags = c.ReadUInt32();
             uint sz = c.ReadUInt32();
 
+            // Virtools 2.1 vertex buffer (chunk data version >= 9).
+            // Layout matches NeMo2 ILoadVertices and libcmo21 CKMesh::Load:
+            //   positions, unless bit 0x10
+            //   diffuse color: one dword if bit 0x01, otherwise one per vertex
+            //   specular color: one dword if bit 0x02, otherwise one per vertex
+            //   normals, unless bit 0x04
+            //   UVs: one pair if bit 0x08, otherwise one pair per vertex
+            // The two color dwords sit in front of the normals. Treating them as
+            // texture coordinates smears the stone medallion into chevrons.
+            bool skipPositions = (flags & 0x10) != 0;
+            bool singleColor = (flags & 0x01) != 0;
+            bool singleSpecular = (flags & 0x02) != 0;
+            bool hasNormals = (flags & 0x04) == 0;
+            bool singleUv = (flags & 0x08) != 0;
+
             mesh.Positions = new Vector3[vertCount];
-            for (int i = 0; i < vertCount; i++)
+            if (!skipPositions)
             {
-                // Virtools is left-handed; mirror Z to get right-handed OpenGL space
-                mesh.Positions[i] = new Vector3(c.ReadFloat(), c.ReadFloat(), -c.ReadFloat());
+                for (int i = 0; i < vertCount; i++)
+                {
+                    // Virtools is left-handed; mirror Z to get right-handed OpenGL space
+                    mesh.Positions[i] = new Vector3(c.ReadFloat(), c.ReadFloat(), -c.ReadFloat());
+                }
             }
 
-            bool hasNormals = (flags & 4) == 0;
+            int colorCount = singleColor ? 1 : (int)vertCount;
+            for (int i = 0; i < colorCount; i++)
+                c.ReadUInt32();
+
+            int specularCount = singleSpecular ? 1 : (int)vertCount;
+            for (int i = 0; i < specularCount; i++)
+                c.ReadUInt32();
+
             if (hasNormals)
             {
                 mesh.Normals = new Vector3[vertCount];
@@ -102,17 +127,25 @@ public class NmoMesh
             }
 
             mesh.TexCoords = new Vector2[vertCount];
-            bool sharedUV = (flags & 8) != 0;
-            if (sharedUV)
+            if (singleUv)
             {
-                var uv = new Vector2(c.ReadFloat(), c.ReadFloat());
-                Array.Fill(mesh.TexCoords, uv);
+                float u = c.ReadFloat();
+                float v = c.ReadFloat();
+                if (float.IsNaN(u)) u = 0f;
+                if (float.IsNaN(v)) v = 0f;
+                var uv = new Vector2(u, v);
+                for (int i = 0; i < vertCount; i++)
+                    mesh.TexCoords[i] = uv;
             }
             else
             {
                 for (int i = 0; i < vertCount; i++)
                 {
-                    mesh.TexCoords[i] = new Vector2(c.ReadFloat(), c.ReadFloat());
+                    float u = c.ReadFloat();
+                    float v = c.ReadFloat();
+                    if (float.IsNaN(u)) u = 0f;
+                    if (float.IsNaN(v)) v = 0f;
+                    mesh.TexCoords[i] = new Vector2(u, v);
                 }
             }
 

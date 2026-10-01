@@ -9,9 +9,9 @@ public class Camera3DController
 
     private float _targetYaw = 0f;
     private float _currentYaw = 0f;
-    private float _currentPitch = 38f;
-    private float _targetPitch = 38f;
-    private float _distance = 22.0f;
+    private float _currentPitch = 26f;
+    private float _targetPitch = 26f;
+    private float _distance = 15.5f;
     private Vector3 _currentLookTarget;
 
     public float CurrentYaw => _currentYaw;
@@ -41,9 +41,18 @@ public class Camera3DController
         Camera = new Camera3D
         {
             Up = Vector3.UnitY,
-            FovY = 55.0f,
+            FovY = 60.0f,
             Projection = CameraProjection.Perspective
         };
+        UpdateCameraPosition();
+    }
+
+    public void LookAlong(Vector3 direction)
+    {
+        Vector3 flat = new(direction.X, 0f, direction.Z);
+        if (flat.LengthSquared() < 1e-4f) return;
+        flat = Vector3.Normalize(flat);
+        _currentYaw = _targetYaw = MathF.Atan2(flat.X, flat.Z) * (180f / MathF.PI);
         UpdateCameraPosition();
     }
 
@@ -63,7 +72,7 @@ public class Camera3DController
         _currentLookTarget = Vector3.Lerp(_currentLookTarget, ballPosition, 12.0f * dt);
 
         // Spacebar raises pitch for track overview
-        _targetPitch = isSpaceDown ? 68.0f : 38.0f;
+        _targetPitch = isSpaceDown ? 62.0f : 26.0f;
 
         // Mouse drag can also adjust yaw
         if (mouseDeltaX != 0f)

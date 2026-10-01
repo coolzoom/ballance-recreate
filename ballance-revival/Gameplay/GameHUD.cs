@@ -8,7 +8,7 @@ public class GameHUD
     private string _bannerText = string.Empty;
     private float _bannerTimer = 0f;
     private Color _bannerColor = Color.Gold;
-    private bool _showHelp = true;
+    private bool _showHelp = false;
 
     public void ShowBanner(string text, Color color, float duration = 2.5f)
     {

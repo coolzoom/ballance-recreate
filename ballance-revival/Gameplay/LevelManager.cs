@@ -25,6 +25,9 @@ public class LevelManager
     private Prefab? _ballStone;
     private Prefab? _ballPaper;
 
+    private Texture2D _flameTex;
+    private Texture2D _pointTex;
+
     public int CurrentLevelNumber { get; private set; } = 1;
     public int Score { get; private set; } = 1000;
     public int Lives { get; private set; } = 3;
@@ -49,6 +52,8 @@ public class LevelManager
         _hud = hud;
 
         Prefabs = new PrefabLibrary(Path.Combine(_gameRoot, "3D Entities", "PH"), textureManager);
+        _flameTex = Billboard.LoadMasked(Path.Combine(_gameRoot, "Textures", "Particle_Flames.bmp"));
+        _pointTex = Billboard.LoadMasked(Path.Combine(_gameRoot, "Textures", "ExtraParticle.bmp"));
         LoadBallMeshes();
         Player = new BallPlayer(Vector3.Zero, BallMaterial.Wood);
         LoadLevel(1);
@@ -325,11 +330,10 @@ public class LevelManager
         _hud.ShowBanner("RESPAWNED", Color.White, 1.0f);
     }
 
-    public void DrawLevel()
+    public void DrawLevel(Vector3 cameraPos, float time)
     {
         if (CurrentRenderer == null || CurrentLevel == null) return;
 
-        // 1. Static level geometry; PH placeholders are replaced by their prefab models
         foreach (var entity in CurrentLevel.AllRenderables)
         {
             if (!CurrentLevel.Placeholders.TryGetValue(entity, out string? group))
@@ -338,13 +342,21 @@ public class LevelManager
                 continue;
             }
 
-            if (group is "P_Extra_Point" or "P_Extra_Life" or "P_Box")
-                continue; // dynamic, drawn below
+            bool dynamic = group is "P_Extra_Point" or "P_Extra_Life" or "P_Box";
+            var prefab = Prefabs.Get(PrefabKey(entity.Name));
+            if (prefab == null || prefab.Parts.Count == 0)
+            {
+                // Level copies of these are untextured editor markers (reset arrows, flame volumes)
+                if (prefab != null)
+                    DrawFlames(prefab, entity.WorldMatrix, cameraPos, time);
+                continue;
+            }
 
-            Prefabs.Get(group)?.Draw(entity.WorldMatrix);
+            if (!dynamic)
+                prefab.Draw(entity.WorldMatrix);
+            DrawFlames(prefab, entity.WorldMatrix, cameraPos, time);
         }
 
-        // 2. Pickups
         foreach (var pickup in Pickups)
         {
             if (pickup.IsCollected || pickup.Entity == null) continue;
@@ -353,23 +365,23 @@ public class LevelManager
             world.Translation = pickup.CurrentPosition;
             world = Matrix4x4.CreateRotationY(pickup.SpinAngle * (MathF.PI / 180f)) * world;
 
-            string group = pickup.Type == PickupType.Point ? "P_Extra_Point" : "P_Extra_Life";
-            Prefabs.Get(group)?.Draw(world);
+            string key = pickup.Type == PickupType.Point ? "P_Extra_Point" : "P_Extra_Life";
+            Prefabs.Get(key)?.Draw(world);
 
             if (pickup.Type == PickupType.Point)
             {
-                // The point orbs are sprites/particles in the original; approximate them with small spheres
-                float a = pickup.SpinAngle * (MathF.PI / 180f);
-                for (int i = 0; i < 4; i++)
+                float spin = pickup.SpinAngle * (MathF.PI / 180f);
+                Raylib.BeginBlendMode(BlendMode.Additive);
+                for (int i = 0; i < 3; i++)
                 {
-                    float t = a + i * MathF.PI / 2f;
-                    var p = pickup.CurrentPosition + new Vector3(MathF.Cos(t) * 1.2f, 0f, MathF.Sin(t) * 1.2f);
-                    Raylib.DrawSphere(p, 0.35f, new Color(120, 200, 255, 255));
+                    float t = spin + i * MathF.PI * 2f / 3f;
+                    var p = pickup.CurrentPosition + new Vector3(MathF.Cos(t) * 0.7f, 1.6f, MathF.Sin(t) * 0.7f);
+                    Billboard.Draw(_pointTex, p, cameraPos, 1.6f, 1.6f, new Color((byte)140, (byte)210, (byte)255, (byte)220));
                 }
+                Raylib.EndBlendMode();
             }
         }
 
-        // 3. Boxes
         foreach (var box in Boxes)
         {
             if (box.Entity == null) continue;
@@ -378,8 +390,30 @@ public class LevelManager
             Prefabs.Get("P_Box")?.Draw(world);
         }
 
-        // 4. Player ball
         DrawPlayerBall();
+    }
+
+    private void DrawFlames(Prefab prefab, Matrix4x4 world, Vector3 cameraPos, float time)
+    {
+        if (prefab.FlamePoints.Count == 0 || _flameTex.Id == 0) return;
+
+        Raylib.BeginBlendMode(BlendMode.Additive);
+        foreach (var local in prefab.FlamePoints)
+        {
+            Vector3 p = Vector3.Transform(local, world) + new Vector3(0f, 0.6f, 0f);
+            float flick = 0.82f + 0.18f * MathF.Sin(time * 11f + p.X * 0.7f);
+            Billboard.Draw(_flameTex, p, cameraPos, 2.4f * flick, 3.6f, new Color((byte)255, (byte)236, (byte)190, (byte)230));
+            Billboard.Draw(_flameTex, p + new Vector3(0f, 1.5f, 0f), cameraPos, 1.5f * flick, 2.8f, new Color((byte)255, (byte)250, (byte)230, (byte)180));
+        }
+        Raylib.EndBlendMode();
+    }
+
+    private static string PrefabKey(string entityName)
+    {
+        int split = entityName.LastIndexOf('_');
+        if (split > 0 && entityName[(split + 1)..].All(char.IsDigit))
+            return entityName[..split];
+        return entityName;
     }
 
     private void DrawPlayerBall()
