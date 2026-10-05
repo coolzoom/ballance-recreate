@@ -12,7 +12,9 @@ public class Prefab : IDisposable
     public NmoLevel Source { get; }
     public MeshRenderer Renderer { get; }
     public List<NmoEntity> Parts { get; } = [];
+    /// <summary>Grate centers of the prefab's flames, in prefab space.</summary>
     public List<Vector3> FlamePoints { get; } = [];
+    public List<string> FlameNames { get; } = [];
 
     public Prefab(NmoLevel source, TextureManager textures, Func<NmoEntity, bool>? filter = null)
     {
@@ -27,12 +29,18 @@ public class Prefab : IDisposable
         foreach (var obj in source.RawFile.Objects)
         {
             if (obj.ClassId != 33 || obj.Chunk == null) continue;
-            if (!obj.Name.Contains("Flame", StringComparison.OrdinalIgnoreCase)) continue;
+            // "_Flame_" frames are emitters; "PC_TwoFlames_MF" style frames are the prefab's own origin
+            if (!obj.Name.Contains("_Flame_", StringComparison.OrdinalIgnoreCase)) continue;
             if (!obj.Chunk.Seek(0x100000)) continue;
             obj.Chunk.ReadUInt32();
             obj.Chunk.ReadUInt32();
             for (int i = 0; i < 9; i++) obj.Chunk.ReadFloat();
-            FlamePoints.Add(new Vector3(obj.Chunk.ReadFloat(), obj.Chunk.ReadFloat(), -obj.Chunk.ReadFloat()));
+            float x = obj.Chunk.ReadFloat();
+            float y = obj.Chunk.ReadFloat();
+            float z = -obj.Chunk.ReadFloat();
+            // Emitter frames hover about 0.8 above the rim of the flame cup (rim at y 1.25 for small flames)
+            FlamePoints.Add(new Vector3(x, y - 0.8f, z));
+            FlameNames.Add(obj.Name);
         }
     }
 
@@ -40,6 +48,12 @@ public class Prefab : IDisposable
     {
         foreach (var part in Parts)
             Renderer.DrawMesh(part.Mesh!, part.WorldMatrix * world);
+    }
+
+    public void SetSurface(Vector3 surface)
+    {
+        foreach (var part in Parts)
+            Renderer.GetOrCreateRenderMesh(part.Mesh!).SetSurface(surface);
     }
 
     public void Dispose() => Renderer.Dispose();

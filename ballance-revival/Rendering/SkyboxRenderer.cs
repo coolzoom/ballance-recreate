@@ -8,6 +8,9 @@ public class SkyboxRenderer : IDisposable
     private readonly TextureManager _textureManager;
     private Texture2D _front, _back, _left, _right, _down;
     public Vector3 FogColor { get; private set; } = new(0.86f, 0.62f, 0.68f);
+    public Vector3 SkyTint { get; private set; } = Vector3.One;
+    public Vector3 GroundTint { get; private set; } = Vector3.One;
+    public Vector3 SunTint { get; private set; } = Vector3.One;
 
     public SkyboxRenderer(TextureManager textureManager)
     {
@@ -23,6 +26,20 @@ public class SkyboxRenderer : IDisposable
         _right = Load($"sky/{prefix}_Right.bmp");
         _down = Load($"sky/{prefix}_Down.bmp");
         FogColor = _textureManager.AverageColor($"sky/{prefix}_Front.bmp");
+
+        Vector3 zenith = _textureManager.AverageColor($"sky/{prefix}_Front.bmp", 0f, 0.15f);
+        Vector3 below = _textureManager.AverageColor($"sky/{prefix}_Down.bmp", 0f, 1f);
+        SkyTint = Tint(zenith, 0.35f);
+        GroundTint = Tint(below, 0.3f) * 0.85f;
+        SunTint = Tint(FogColor, 0.25f) * 1.05f;
+    }
+
+    /// <summary>Keeps only the hue of a sky color at normalized brightness, blended toward white.</summary>
+    private static Vector3 Tint(Vector3 color, float amount)
+    {
+        float lum = Vector3.Dot(color, new Vector3(0.299f, 0.587f, 0.114f));
+        Vector3 hue = color / MathF.Max(lum, 0.05f);
+        return Vector3.Clamp(Vector3.Lerp(Vector3.One, hue, amount), new Vector3(0.6f), new Vector3(1.4f));
     }
 
     private Texture2D Load(string name)

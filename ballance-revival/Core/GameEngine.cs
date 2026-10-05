@@ -18,8 +18,13 @@ public class GameEngine : IDisposable
     private GameHUD? _hud;
     private Camera3DController? _camera;
     private LevelManager? _levelManager;
+    private MainMenu? _menu;
+    private Texture2D _vignette;
 
     private float _totalTime = 0f;
+    private bool _playing;
+    private bool _quit;
+    private bool _disposed;
 
     public string? ScreenshotPath { get; init; }
     public int StartLevel { get; init; } = 1;
@@ -33,9 +38,12 @@ public class GameEngine : IDisposable
 
     public void Run()
     {
-        Raylib.SetConfigFlags(ConfigFlags.Msaa4xHint | ConfigFlags.ResizableWindow);
+        Raylib.SetConfigFlags(ConfigFlags.Msaa4xHint | ConfigFlags.VSyncHint | ConfigFlags.ResizableWindow);
         Raylib.InitWindow(_width, _height, "Ballance Revival - .NET Core");
         Raylib.SetTargetFPS(60);
+        // Raylib's default 0.01 near plane wastes depth precision and makes the baked shadow decals z-fight
+        Rlgl.SetClipPlanes(RenderQueue.NearPlane, RenderQueue.FarPlane);
+        CreateVignette();
 
         string texturesDir = Path.Combine(_gameRoot, "Textures");
         string soundsDir = Path.Combine(_gameRoot, "Sounds");
@@ -46,15 +54,18 @@ public class GameEngine : IDisposable
         _skybox = new SkyboxRenderer(_textureManager);
         _particles = new ParticleSystem();
         _hud = new GameHUD();
+        _menu = new MainMenu(texturesDir, soundsDir);
 
-        _levelManager = new LevelManager(_gameRoot, _textureManager, _audioManager, _particles, _hud);
-        if (StartLevel > 1) _levelManager.LoadLevel(StartLevel);
+        // --shot of a level skips the menu. Level 0 captures the menu itself.
+        bool shotIntoLevel = ScreenshotPath != null && StartLevel > 0;
+        _levelManager = new LevelManager(_gameRoot, _textureManager, _audioManager, _particles, _hud, announceStart: shotIntoLevel && StartLevel <= 1);
+        if (shotIntoLevel && StartLevel > 1) _levelManager.LoadLevel(StartLevel);
         AimCamera();
-
         UpdateSkyTheme(_levelManager.CurrentLevelNumber);
+        _playing = shotIntoLevel;
 
         int frame = 0;
-        while (!Raylib.WindowShouldClose())
+        while (!Raylib.WindowShouldClose() && !_quit)
         {
             float dt = MathF.Min(Raylib.GetFrameTime(), 0.05f);
             _totalTime += dt;
@@ -77,7 +88,14 @@ public class GameEngine : IDisposable
 
     private void ProcessInput(float dt)
     {
-        if (_camera == null || _levelManager == null) return;
+        if (!_playing || _camera == null || _levelManager == null) return;
+
+        if (Raylib.IsKeyPressed(KeyboardKey.Escape))
+        {
+            _playing = false;
+            _menu?.Show(MenuPage.Pause);
+            return;
+        }
 
         // Shift key check
         bool isShift = Raylib.IsKeyDown(KeyboardKey.LeftShift) || Raylib.IsKeyDown(KeyboardKey.RightShift);
@@ -117,7 +135,16 @@ public class GameEngine : IDisposable
 
     private void Update(float dt)
     {
-        if (_levelManager == null || _camera == null || _particles == null || _hud == null) return;
+        if (_levelManager == null || _camera == null || _particles == null || _hud == null || _menu == null) return;
+
+        if (!_playing)
+        {
+            _menu.SetAmbient(!_menu.CoversGame);
+            ApplyMenu(_menu.Update(dt));
+            return;
+        }
+
+        _menu.SetAmbient(false);
 
         bool isShift = Raylib.IsKeyDown(KeyboardKey.LeftShift) || Raylib.IsKeyDown(KeyboardKey.RightShift);
 
@@ -154,9 +181,40 @@ public class GameEngine : IDisposable
         _hud.Update(dt);
     }
 
+    private void ApplyMenu(MenuCommand cmd)
+    {
+        if (_levelManager == null || _menu == null) return;
+
+        switch (cmd)
+        {
+            case MenuCommand.Quit:
+                _quit = true;
+                break;
+            case MenuCommand.StartLevel:
+                _levelManager.LoadLevel(_menu.ChosenLevel);
+                AimCamera();
+                UpdateSkyTheme(_menu.ChosenLevel);
+                _playing = true;
+                break;
+            case MenuCommand.Resume:
+                _playing = true;
+                break;
+            case MenuCommand.RestartLevel:
+                _levelManager.LoadLevel(_levelManager.CurrentLevelNumber);
+                AimCamera();
+                UpdateSkyTheme(_levelManager.CurrentLevelNumber);
+                _playing = true;
+                break;
+            case MenuCommand.LeaveLevel:
+                _menu.Show(MenuPage.Main);
+                _playing = false;
+                break;
+        }
+    }
+
     private void Render()
     {
-        if (_camera == null || _levelManager == null || _skybox == null || _particles == null || _hud == null) return;
+        if (_camera == null || _levelManager == null || _skybox == null || _particles == null || _hud == null || _menu == null) return;
 
         int screenWidth = Raylib.GetScreenWidth();
         int screenHeight = Raylib.GetScreenHeight();
@@ -164,21 +222,39 @@ public class GameEngine : IDisposable
         Raylib.BeginDrawing();
         Raylib.ClearBackground(new Color(135, 206, 235, 255));
 
+        if (!_playing && !_menu.CoversGame)
+        {
+            DrawMenuSky();
+            _menu.Draw(screenWidth, screenHeight);
+            Raylib.EndDrawing();
+            return;
+        }
+
         // 3D Scene Rendering
         Raylib.BeginMode3D(_camera.Camera);
+        RenderQueue.BeginFrame(_camera.Camera, screenWidth / (float)Math.Max(screenHeight, 1));
 
         LitShader.SetFog(_camera.Camera.Position, _skybox.FogColor, 0.0045f);
+        LitShader.SetEnvironment(_skybox.SkyTint, _skybox.GroundTint, _skybox.SunTint);
+        LitShader.SetFogHeight(_levelManager.FloorMinY - 6f, 70f);
 
         // 1. Skybox
         _skybox.Draw(_camera.Camera.Position);
 
         // 2. Track & Objects
-        _levelManager.DrawLevel(_camera.Camera.Position, _totalTime);
+        _levelManager.DrawLevel(_camera.Camera, _totalTime);
+        RenderQueue.EndFrame();
 
         // 3. Particles
-        _particles.Draw();
+        _particles.Draw(_camera.Camera);
 
         Raylib.EndMode3D();
+
+        if (_vignette.Id != 0)
+        {
+            Raylib.DrawTexturePro(_vignette, new Rectangle(0, 0, _vignette.Width, _vignette.Height),
+                new Rectangle(0, 0, screenWidth, screenHeight), Vector2.Zero, 0f, Color.White);
+        }
 
         // 2D HUD Rendering
         float speed = _levelManager.Player.Velocity.Length();
@@ -192,7 +268,35 @@ public class GameEngine : IDisposable
             speed
         );
 
+        if (!_playing)
+            _menu.Draw(screenWidth, screenHeight);
+
         Raylib.EndDrawing();
+    }
+
+    private void CreateVignette()
+    {
+        Image img = Raylib.GenImageGradientRadial(256, 256, 0.55f, Color.Blank, new Color((byte)0, (byte)0, (byte)0, (byte)90));
+        _vignette = Raylib.LoadTextureFromImage(img);
+        Raylib.UnloadImage(img);
+        Raylib.SetTextureFilter(_vignette, TextureFilter.Bilinear);
+        Raylib.SetTextureWrap(_vignette, TextureWrap.Clamp);
+    }
+
+    private void DrawMenuSky()
+    {
+        if (_skybox == null) return;
+        var cam = new Camera3D
+        {
+            Position = Vector3.Zero,
+            Target = new Vector3(0f, 0.25f, 1f),
+            Up = Vector3.UnitY,
+            FovY = 60f,
+            Projection = CameraProjection.Perspective
+        };
+        Raylib.BeginMode3D(cam);
+        _skybox.Draw(cam.Position);
+        Raylib.EndMode3D();
     }
 
     private void UpdateSkyTheme(int levelNum)
@@ -222,11 +326,18 @@ public class GameEngine : IDisposable
 
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
+
+        _menu?.Dispose();
         _textureManager?.Dispose();
         _audioManager?.Dispose();
         _skybox?.Dispose();
+        _particles?.Dispose();
+        if (_vignette.Id != 0) Raylib.UnloadTexture(_vignette);
         _levelManager?.CurrentRenderer?.Dispose();
         _levelManager?.Prefabs.Dispose();
+        _levelManager?.DisposeEffects();
         LitShader.Unload();
 
         if (Raylib.IsWindowReady())

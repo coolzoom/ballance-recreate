@@ -79,6 +79,8 @@ public class TextureManager : IDisposable
             {
                 Raylib.GenTextureMipmaps(ref tex);
                 Raylib.SetTextureFilter(tex, TextureFilter.Trilinear);
+                // Only raises max anisotropy; the trilinear min filter stays. Sharpens track textures at grazing angles.
+                Raylib.SetTextureFilter(tex, TextureFilter.Anisotropic16X);
                 Raylib.SetTextureWrap(tex, TextureWrap.Repeat);
                 _textures[name] = tex;
                 return tex;
@@ -88,7 +90,8 @@ public class TextureManager : IDisposable
         return _whiteTexture;
     }
 
-    public unsafe Vector3 AverageColor(string name)
+    /// <summary>Average color of the horizontal band between <paramref name="top"/> and <paramref name="bottom"/> (fractions of height).</summary>
+    public unsafe Vector3 AverageColor(string name, float top = 0.2f, float bottom = 0.5f)
     {
         string path = Path.Combine(_textureDirectory, name.Replace('/', Path.DirectorySeparatorChar));
         if (!File.Exists(path) || !ImageDecoder.TryLoad(path, out Image img))
@@ -98,8 +101,8 @@ public class TextureManager : IDisposable
         int w = img.Width;
         int h = img.Height;
         long r = 0, g = 0, b = 0, n = 0;
-        int y0 = h / 5;
-        int y1 = h / 2;
+        int y0 = Math.Clamp((int)(h * top), 0, h - 1);
+        int y1 = Math.Clamp((int)(h * bottom), y0 + 1, h);
         for (int y = y0; y < y1; y += 6)
         {
             for (int x = 0; x < w; x += 6)

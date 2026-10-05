@@ -25,9 +25,26 @@ public class LevelManager
     private Prefab? _ballStone;
     private Prefab? _ballPaper;
 
-    private Texture2D _flameTex;
+    private readonly FlameRenderer _flames;
     private Texture2D _pointTex;
-    private readonly List<(Prefab Prefab, Matrix4x4 World)> _flameQueue = [];
+    private struct FlameSource
+    {
+        public Vector3 Base;
+        public CheckpointTrigger? Checkpoint;
+        public bool Big;
+    }
+
+    private readonly List<FlameSource> _flameSources = [];
+    private readonly List<Vector4> _visibleFlames = [];
+
+    private readonly List<(Vector3 Position, float Radius)> _flameLights = [];
+    private readonly Vector4[] _lightPos = new Vector4[LitShader.MaxLights];
+    private readonly Vector3[] _lightColor = new Vector3[LitShader.MaxLights];
+    private readonly List<int> _lightOrder = [];
+    private static readonly Vector3 FlameLightColor = new(1.0f, 0.38f, 0.8f);
+
+    /// <summary>Lowest floor/rail origin; height fog starts just below it.</summary>
+    public float FloorMinY { get; private set; }
 
     public int CurrentLevelNumber { get; private set; } = 1;
     public int Score { get; private set; } = 1000;
@@ -44,7 +61,7 @@ public class LevelManager
     public bool IsLevelComplete { get; private set; }
     public float LevelCompleteTimer { get; private set; } = 0f;
 
-    public LevelManager(string gameRoot, TextureManager textureManager, AudioManager audioManager, ParticleSystem particles, GameHUD hud)
+    public LevelManager(string gameRoot, TextureManager textureManager, AudioManager audioManager, ParticleSystem particles, GameHUD hud, bool announceStart = true)
     {
         _gameRoot = gameRoot;
         _textureManager = textureManager;
@@ -53,11 +70,11 @@ public class LevelManager
         _hud = hud;
 
         Prefabs = new PrefabLibrary(Path.Combine(_gameRoot, "3D Entities", "PH"), textureManager);
-        _flameTex = Billboard.LoadMasked(Path.Combine(_gameRoot, "Textures", "Particle_Flames.bmp"), keepColor: true);
+        _flames = new FlameRenderer(Path.Combine(_gameRoot, "Textures"));
         _pointTex = Billboard.LoadMasked(Path.Combine(_gameRoot, "Textures", "ExtraParticle.bmp"));
         LoadBallMeshes();
         Player = new BallPlayer(Vector3.Zero, BallMaterial.Wood);
-        LoadLevel(1);
+        LoadLevel(1, announceStart);
     }
 
     private void LoadBallMeshes()
@@ -82,9 +99,16 @@ public class LevelManager
         _ballWood = Make("Ball_Wood");
         _ballStone = Make("Ball_Stone");
         _ballPaper = Make("Ball_Paper");
+
+        // The ball never receives its own blob shadow
+        _ballWood.SetSurface(new Vector3(0.22f, 20f, 0f));
+        _ballStone.SetSurface(new Vector3(0.45f, 48f, 0f));
+        _ballPaper.SetSurface(new Vector3(0.06f, 8f, 0f));
+        Prefabs.Get("P_Extra_Point")?.SetSurface(new Vector3(0.6f, 64f, 1f));
+        Prefabs.Get("P_Extra_Life")?.SetSurface(new Vector3(0.6f, 64f, 1f));
     }
 
-    public void LoadLevel(int levelNum)
+    public void LoadLevel(int levelNum, bool announce = true)
     {
         CurrentLevelNumber = levelNum;
         IsLevelComplete = false;
@@ -125,6 +149,7 @@ public class LevelManager
             if (rail.Position.Y < minY) minY = rail.Position.Y;
         }
 
+        FloorMinY = minY == float.MaxValue ? 0f : minY;
         KillY = minY - 30.0f;
 
         // Determine spawn position
@@ -145,9 +170,13 @@ public class LevelManager
 
         // Build gameplay elements
         BuildInteractiveElements();
+        BuildFlameSources();
 
-        _audioManager.PlayLevelStart();
-        _hud.ShowBanner($"LEVEL {CurrentLevelNumber:D2} - START", Color.Gold, 2.5f);
+        if (announce)
+        {
+            _audioManager.PlayLevelStart();
+            _hud.ShowBanner($"LEVEL {CurrentLevelNumber:D2} - START", Color.Gold, 2.5f);
+        }
     }
 
     private void BuildInteractiveElements()
@@ -195,6 +224,62 @@ public class LevelManager
         {
             Boxes.Add(new MovableBox(box.Position, box));
         }
+    }
+
+    /// <summary>Every flame grate in the level; checkpoints must already be built.</summary>
+    private void BuildFlameSources()
+    {
+        _flameSources.Clear();
+        if (CurrentLevel == null) return;
+
+        foreach (var entity in CurrentLevel.AllRenderables)
+        {
+            if (!CurrentLevel.Placeholders.ContainsKey(entity)) continue;
+            var prefab = Prefabs.Get(PrefabKey(entity.Name));
+            if (prefab == null) continue;
+            var checkpoint = Checkpoints.Find(c => c.Entity == entity);
+            for (int i = 0; i < prefab.FlamePoints.Count; i++)
+            {
+                _flameSources.Add(new FlameSource
+                {
+                    Base = Vector3.Transform(prefab.FlamePoints[i], entity.WorldMatrix),
+                    Checkpoint = checkpoint,
+                    Big = prefab.FlameNames[i].EndsWith("_Big", StringComparison.OrdinalIgnoreCase)
+                });
+            }
+        }
+    }
+
+    /// <summary>
+    /// A checkpoint's big center flame burns until the ball reaches it, then the two small side
+    /// flames take over. Start platform flames always burn.
+    /// </summary>
+    private static bool IsLit(FlameSource f) =>
+        f.Checkpoint == null || f.Big != f.Checkpoint.IsActivated;
+
+    /// <summary>Uploads the flame lights nearest the ball plus the ball shadow caster.</summary>
+    private void ApplyLighting(float time)
+    {
+        Vector3 focus = Player.Position;
+        _flameLights.Clear();
+        foreach (var f in _flameSources)
+            if (IsLit(f)) _flameLights.Add((f.Base + new Vector3(0f, f.Big ? 2.0f : 1.2f, 0f), f.Big ? 15f : 11f));
+
+        _lightOrder.Clear();
+        for (int i = 0; i < _flameLights.Count; i++) _lightOrder.Add(i);
+        _lightOrder.Sort((a, b) =>
+            Vector3.DistanceSquared(_flameLights[a].Position, focus).CompareTo(Vector3.DistanceSquared(_flameLights[b].Position, focus)));
+
+        int count = Math.Min(_lightOrder.Count, LitShader.MaxLights);
+        for (int i = 0; i < count; i++)
+        {
+            var (pos, radius) = _flameLights[_lightOrder[i]];
+            float flick = 0.85f + 0.1f * MathF.Sin(time * 11f + pos.X * 0.7f) + 0.05f * MathF.Sin(time * 23f + pos.Z);
+            _lightPos[i] = new Vector4(pos, radius);
+            _lightColor[i] = FlameLightColor * (0.85f * flick);
+        }
+        LitShader.SetLights(_lightPos, _lightColor, count);
+        LitShader.SetBall(Player.Position, Player.Properties.Radius);
     }
 
     public void Update(float dt, float totalTime)
@@ -325,17 +410,20 @@ public class LevelManager
         Player.Respawn(ActiveRespawnPosition);
     }
 
+    public void DisposeEffects() => _flames.Dispose();
+
     public void RespawnAtCheckpoint()
     {
         Player.Respawn(ActiveRespawnPosition);
         _hud.ShowBanner("RESPAWNED", Color.White, 1.0f);
     }
 
-    public void DrawLevel(Vector3 cameraPos, float time)
+    public void DrawLevel(Camera3D camera, float time)
     {
+        Vector3 cameraPos = camera.Position;
         if (CurrentRenderer == null || CurrentLevel == null) return;
 
-        _flameQueue.Clear();
+        ApplyLighting(time);
 
         foreach (var entity in CurrentLevel.AllRenderables)
         {
@@ -347,17 +435,11 @@ public class LevelManager
 
             bool dynamic = group is "P_Extra_Point" or "P_Extra_Life" or "P_Box";
             var prefab = Prefabs.Get(PrefabKey(entity.Name));
-            if (prefab == null || prefab.Parts.Count == 0)
-            {
-                // Level copies of these are untextured editor markers (reset arrows, flame volumes)
-                if (prefab != null)
-                    DrawFlames(prefab, entity.WorldMatrix, cameraPos, time);
-                continue;
-            }
+            // Level copies of empty prefabs are untextured editor markers (reset arrows, flame volumes)
+            if (prefab == null || prefab.Parts.Count == 0) continue;
 
             if (!dynamic)
                 prefab.Draw(entity.WorldMatrix);
-            DrawFlames(prefab, entity.WorldMatrix, cameraPos, time);
         }
 
         foreach (var pickup in Pickups)
@@ -370,19 +452,6 @@ public class LevelManager
 
             string key = pickup.Type == PickupType.Point ? "P_Extra_Point" : "P_Extra_Life";
             Prefabs.Get(key)?.Draw(world);
-
-            if (pickup.Type == PickupType.Point)
-            {
-                float spin = pickup.SpinAngle * (MathF.PI / 180f);
-                Raylib.BeginBlendMode(BlendMode.Additive);
-                for (int i = 0; i < 3; i++)
-                {
-                    float t = spin + i * MathF.PI * 2f / 3f;
-                    var p = pickup.CurrentPosition + new Vector3(MathF.Cos(t) * 0.7f, 1.6f, MathF.Sin(t) * 0.7f);
-                    Billboard.Draw(_pointTex, p, cameraPos, 1.6f, 1.6f, new Color((byte)140, (byte)210, (byte)255, (byte)220));
-                }
-                Raylib.EndBlendMode();
-            }
         }
 
         foreach (var box in Boxes)
@@ -394,32 +463,38 @@ public class LevelManager
         }
 
         DrawPlayerBall();
-        DrawQueuedFlames(cameraPos, time);
+        RenderQueue.FlushTransparent();
+        DrawQueuedFlames(camera, time);
     }
 
-    private void DrawFlames(Prefab prefab, Matrix4x4 world, Vector3 cameraPos, float time)
+    private void DrawQueuedFlames(Camera3D camera, float time)
     {
-        if (prefab.FlamePoints.Count == 0 || _flameTex.Id == 0) return;
-        _flameQueue.Add((prefab, world));
-    }
+        Vector3 cameraPos = camera.Position;
+        // Drawn after the level and the transparent pass without depth writes,
+        // otherwise the sprite quads occlude whatever is behind them.
+        _visibleFlames.Clear();
+        foreach (var f in _flameSources)
+        {
+            if (!IsLit(f)) continue;
+            float scale = f.Big ? 1.7f : 1f;
+            if (RenderQueue.IsVisible(f.Base + new Vector3(0f, 3f * scale, 0f), 5f * scale))
+                _visibleFlames.Add(new Vector4(f.Base, scale));
+        }
+        _flames.DrawAll(camera, _visibleFlames, time);
 
-    private void DrawQueuedFlames(Vector3 cameraPos, float time)
-    {
-        if (_flameQueue.Count == 0 || _flameTex.Id == 0) return;
-
-        // Draw after the level so the black color key does not hide geometry,
-        // and do not write depth or the quad still occludes whatever is behind it.
         Rlgl.DrawRenderBatchActive();
         Rlgl.DisableDepthMask();
         Raylib.BeginBlendMode(BlendMode.Additive);
-        foreach (var (prefab, world) in _flameQueue)
+
+        foreach (var pickup in Pickups)
         {
-            foreach (var local in prefab.FlamePoints)
+            if (pickup.IsCollected || pickup.Entity == null || pickup.Type != PickupType.Point) continue;
+            float spin = pickup.SpinAngle * (MathF.PI / 180f);
+            for (int i = 0; i < 3; i++)
             {
-                Vector3 p = Vector3.Transform(local, world) + new Vector3(0f, 0.6f, 0f);
-                float flick = 0.82f + 0.18f * MathF.Sin(time * 11f + p.X * 0.7f);
-                Billboard.Draw(_flameTex, p, cameraPos, 2.4f * flick, 3.6f, new Color((byte)255, (byte)210, (byte)230, (byte)210));
-                Billboard.Draw(_flameTex, p + new Vector3(0f, 1.5f, 0f), cameraPos, 1.5f * flick, 2.8f, new Color((byte)255, (byte)230, (byte)240, (byte)150));
+                float t = spin + i * MathF.PI * 2f / 3f;
+                var p = pickup.CurrentPosition + new Vector3(MathF.Cos(t) * 0.7f, 1.6f, MathF.Sin(t) * 0.7f);
+                Billboard.Draw(_pointTex, p, cameraPos, 1.6f, 1.6f, new Color((byte)140, (byte)210, (byte)255, (byte)220));
             }
         }
         Raylib.EndBlendMode();

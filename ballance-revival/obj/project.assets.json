@@ -125,16 +125,16 @@
     ]
   },
   "packageFolders": {
-    "/Users/mac/.nuget/packages/": {}
+    "/var/folders/y7/snwt2c6d0ybg44f1v8dw7vlc0000gn/T/cursor-sandbox-cache/bb919ee1f1d9c664a4309fb8bffe4780/nuget": {}
   },
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "/Users/mac/Downloads/Ballance/ballance-revival/BallanceRevival.csproj",
+      "projectUniqueName": "/Users/mac/Downloads/git/Ballance/ballance-revival/BallanceRevival.csproj",
       "projectName": "BallanceRevival",
-      "projectPath": "/Users/mac/Downloads/Ballance/ballance-revival/BallanceRevival.csproj",
-      "packagesPath": "/Users/mac/.nuget/packages/",
-      "outputPath": "/Users/mac/Downloads/Ballance/ballance-revival/obj/",
+      "projectPath": "/Users/mac/Downloads/git/Ballance/ballance-revival/BallanceRevival.csproj",
+      "packagesPath": "/var/folders/y7/snwt2c6d0ybg44f1v8dw7vlc0000gn/T/cursor-sandbox-cache/bb919ee1f1d9c664a4309fb8bffe4780/nuget",
+      "outputPath": "/Users/mac/Downloads/git/Ballance/ballance-revival/obj/",
       "projectStyle": "PackageReference",
       "configFilePaths": [
         "/Users/mac/.nuget/NuGet/NuGet.Config"
