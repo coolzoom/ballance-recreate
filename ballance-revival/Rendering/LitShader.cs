@@ -87,11 +87,24 @@ public static class LitShader
             vec3 v = toView / max(dist, 1e-4);
 
             float shadow = ballShadow();
-
-            vec3 ambient = mix(groundTint, skyTint, n.y * 0.5 + 0.5) * 0.64;
             float ndl = dot(n, sunDir);
-            float wrapped = clamp((ndl + 0.3) / 1.3, 0.0, 1.0);
-            vec3 light = ambient * (1.0 - 0.45 * shadow) + sunTint * (0.48 * wrapped) * (1.0 - shadow);
+            bool isBall = surface.z < 0.5 && surface.x > 0.0;
+
+            vec3 light;
+            if (isBall)
+            {
+                // Hero ball lighting: neutral-warm directional shading with deep shadowed underside
+                // matching the original Virtools ball rendering instead of sky-tinted ambient wash.
+                vec3 ballAmbient = mix(vec3(0.16, 0.16, 0.18), mix(vec3(0.54), skyTint * 0.52, 0.35), n.y * 0.5 + 0.5);
+                float ballWrap = clamp((ndl + 0.12) / 1.12, 0.0, 1.0);
+                light = ballAmbient + mix(vec3(1.0, 0.98, 0.94), sunTint, 0.25) * (0.76 * ballWrap);
+            }
+            else
+            {
+                vec3 ambient = mix(groundTint * 0.72, skyTint, n.y * 0.5 + 0.5) * 0.62;
+                float wrapped = clamp((ndl + 0.3) / 1.3, 0.0, 1.0);
+                light = ambient * (1.0 - 0.45 * shadow) + sunTint * (0.50 * wrapped) * (1.0 - shadow);
+            }
 
             vec3 spec = vec3(0.0);
             if (surface.x > 0.0 && ndl > 0.0)
@@ -109,13 +122,16 @@ public static class LitShader
                 if (att <= 0.0) continue;
                 att *= att;
                 float lambert = max(dot(n, l / ld), 0.0) * 0.75 + 0.25;
-                light += lightColor[i] * att * lambert;
+                // Keep flame bounce subtle on the ball so it does not turn magenta near start/checkpoint grates
+                float lightScale = isBall ? 0.35 : 1.0;
+                light += lightColor[i] * att * lambert * lightScale;
             }
 
-            // Fresnel-style rim lighting for better edge definition
-            float fresnel = pow(1.0 - max(dot(n, v), 0.0), 3.0);
+            // Subtle Fresnel rim on lit edges only (keeps shadowed undersides grounded)
+            float fresnel = pow(1.0 - max(dot(n, v), 0.0), 3.2) * clamp(ndl * 0.5 + 0.5, 0.0, 1.0);
             vec3 rimColor = mix(skyTint, sunTint, max(dot(n, sunDir), 0.0));
-            vec3 color = texel.rgb * light + spec + rimColor * fresnel * 0.15;
+            float rimStrength = isBall ? 0.05 : 0.10;
+            vec3 color = texel.rgb * light + spec + rimColor * fresnel * rimStrength;
             color = softClip(color);
 
             float fog = 1.0 - exp(-fogDensity * dist);

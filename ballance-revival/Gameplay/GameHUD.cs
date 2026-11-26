@@ -1,20 +1,61 @@
 using System.Numerics;
+using BallanceRevival.Rendering;
 using Raylib_cs;
 
 namespace BallanceRevival.Gameplay;
 
-public class GameHUD
+/// <summary>
+/// In-game HUD built directly from the original Camera.nmo sprite layout,
+/// Button01_special.tga atlas, and Font_1.tga bitmap font.
+/// </summary>
+public class GameHUD : IDisposable
 {
+    private readonly Texture2D _atlas;
+    private readonly GameFont? _font;
+
+    // Exact UV pixel rectangles in Button01_special.tga (256x256), from Camera.nmo 0x10f000 chunks
+    private static readonly Rectangle SrcPointsBg = new(0.3255f * 256f, 0.73f * 256f, (1.0f - 0.3255f) * 256f, (0.9804f - 0.73f) * 256f);
+    private static readonly Rectangle SrcPointsGlow = new(0.435f * 256f, 0.508f * 256f, (0.995f - 0.435f) * 256f, (0.713f - 0.508f) * 256f);
+    private static readonly Rectangle SrcLifeBall = new(0.0667f * 256f, 0.5294f * 256f, (0.1765f - 0.0667f) * 256f, (0.6392f - 0.5294f) * 256f);
+    private static readonly Rectangle SrcLifeStart = new(0.1843f * 256f, 0.4667f * 256f, (0.4078f - 0.1843f) * 256f, (0.702f - 0.4667f) * 256f);
+    private static readonly Rectangle SrcLifeEnd = new(0.004f * 256f, 0.5255f * 256f, (0.06f - 0.004f) * 256f, (0.641f - 0.5255f) * 256f);
+
     private string _bannerText = string.Empty;
     private float _bannerTimer = 0f;
+    private float _bannerDuration = 2.5f;
     private Color _bannerColor = Color.Gold;
     private bool _showHelp = false;
+
+    private int _lastScore = -1;
+    private float _scoreGlow = 0f;
+
+    public GameHUD(string? texturesDir = null)
+    {
+        if (!string.IsNullOrEmpty(texturesDir))
+        {
+            string atlasPath = Path.Combine(texturesDir, "Button01_special.tga");
+            if (File.Exists(atlasPath) && ImageDecoder.TryLoad(atlasPath, out Image img))
+            {
+                _atlas = Raylib.LoadTextureFromImage(img);
+                Raylib.UnloadImage(img);
+                if (_atlas.Id != 0)
+                    Raylib.SetTextureFilter(_atlas, TextureFilter.Bilinear);
+            }
+
+            string fontPath = Path.Combine(texturesDir, "Font_1.tga");
+            if (File.Exists(fontPath))
+            {
+                _font = new GameFont(fontPath);
+            }
+        }
+    }
 
     public void ShowBanner(string text, Color color, float duration = 2.5f)
     {
         _bannerText = text;
         _bannerColor = color;
         _bannerTimer = duration;
+        _bannerDuration = MathF.Max(duration, 0.1f);
     }
 
     public void Update(float dt)
@@ -23,148 +64,159 @@ public class GameHUD
         {
             _bannerTimer -= dt;
             if (_bannerTimer <= 0f)
-            {
                 _bannerText = string.Empty;
-            }
         }
 
+        if (_scoreGlow > 0f)
+            _scoreGlow = MathF.Max(0f, _scoreGlow - dt * 1.4f);
+
         if (Raylib.IsKeyPressed(KeyboardKey.H))
-        {
             _showHelp = !_showHelp;
-        }
     }
 
     public void Draw(int screenWidth, int screenHeight, int levelNumber, int score, int lives, BallMaterial material, float speed)
     {
-        DrawScore(screenWidth, screenHeight, score);
-        DrawLives(screenWidth, screenHeight, lives);
+        if (_lastScore >= 0 && score > _lastScore)
+            _scoreGlow = 1f;
+        _lastScore = score;
+
+        // Preserve original 4:3 HUD proportions on widescreen displays so life spheres stay circular
+        float h = screenHeight;
+        float refW = h * (4f / 3f);
+
+        DrawScore(h, refW, score);
+        DrawLives(screenWidth, h, refW, lives);
+
+        if (!string.IsNullOrEmpty(_bannerText))
+            DrawBanner(screenWidth, screenHeight);
 
         if (_showHelp)
             DrawHelp(screenWidth);
     }
 
-    // Original in-game HUD is only the score plate and the life spheres.
-        private static void DrawScore(int screenWidth, int screenHeight, int score)
+    private void DrawScore(float h, float refW, int score)
     {
-        const int plateW = 156;
-        const int plateH = 46;
-        int x = 78;
-        int y = screenHeight - plateH - 28;
-        var plate = new Rectangle(x, y, plateW, plateH);
-        var metal = new Color((byte)186, (byte)196, (byte)206, (byte)230);
-        var metalDim = new Color((byte)120, (byte)132, (byte)144, (byte)210);
+        // Camera.nmo Interface_Points_bg: [0.015, 0.87, 0.235, 0.98]
+        var bgDest = new Rectangle(0.015f * refW, 0.87f * h, (0.235f - 0.015f) * refW, (0.98f - 0.87f) * h);
 
-        // Base Plate
-        Raylib.DrawRectangleRounded(plate, 0.35f, 8, new Color((byte)20, (byte)25, (byte)32, (byte)220));
-        
-        // Simulated Gradient Fill: Drawing thin horizontal lines to create a subtle vertical shift
-        for (int i = 0; i < plateH; i++)
-        { 
-            float t = (float)i / plateH;
-            Color rowCol = new Color((byte)(28 + t * 10), (byte)(34 + t * 10), (byte)(42 + t * 10), (byte)210);
-            Raylib.DrawLine(x + 4, y + i, x + plateW - 4, y + i, rowCol);
+        if (_atlas.Id != 0)
+        {
+            if (_scoreGlow > 0.01f)
+            {
+                byte glowAlpha = (byte)(Math.Clamp(_scoreGlow, 0f, 1f) * 220f);
+                Raylib.DrawTexturePro(_atlas, SrcPointsGlow, bgDest, Vector2.Zero, 0f, new Color((byte)255, (byte)255, (byte)255, glowAlpha));
+            }
+            Raylib.DrawTexturePro(_atlas, SrcPointsBg, bgDest, Vector2.Zero, 0f, Color.White);
+        }
+        else
+        {
+            Raylib.DrawRectangleRounded(bgDest, 0.35f, 8, new Color((byte)24, (byte)30, (byte)38, (byte)215));
+            Raylib.DrawRectangleRoundedLines(bgDest, 0.35f, 8, new Color((byte)186, (byte)196, (byte)206, (byte)230));
         }
 
-        Raylib.DrawRectangleRoundedLines(plate, 0.35f, 8, metal);
-        Raylib.DrawRectangleRoundedLines(new Rectangle(x + 3, y + 3, plateW - 6, plateH - 6), 0.32f, 8, metalDim);
-
-        DrawScoreSwoosh(x, y, plateH, metal, metalDim);
-
+        // Camera.nmo Interface_Points_digits: [0.05, 0.8842, 0.2037, 0.9342]
+        // Gameplay.nmo Font_Punktezähler: Space=(1.5,1.0), Scale=(0.8,0.9), right-aligned with drop shadow
         string digits = Math.Max(0, score).ToString();
-        const int font = 28;
-        int textW = MeasureSpaced(digits, font, 3);
-        int tx = x + (plateW - textW) / 2;
-        int ty = y + (plateH - font) / 2 - 1;
-        DrawSpaced(digits, tx, ty, font, 3, new Color((byte)236, (byte)240, (byte)244, (byte)255));
+        float rightX = 0.201f * refW;
+        float digitH = (0.9342f - 0.8842f) * h * 0.92f;
+        float digitY = 0.8842f * h + ((0.9342f - 0.8842f) * h - digitH) * 0.45f;
+
+        if (_font != null && _font.Ready)
+        {
+            const float aspectX = 1.18f;
+            const float extraSpace = 4.0f;
+            float shadowOff = MathF.Max(1.5f, h * 0.0022f);
+            _font.DrawRight(digits, rightX + shadowOff, digitY + shadowOff, digitH, new Color((byte)0, (byte)0, (byte)0, (byte)110), aspectX, extraSpace);
+            _font.DrawRight(digits, rightX, digitY, digitH, new Color((byte)248, (byte)250, (byte)255, (byte)255), aspectX, extraSpace);
+        }
+        else
+        {
+            int fontSize = Math.Max(16, (int)(digitH * 0.85f));
+            int tw = Raylib.MeasureText(digits, fontSize);
+            Raylib.DrawText(digits, (int)(rightX - tw), (int)digitY, fontSize, Color.White);
+        }
     }
 
-    private static void DrawScoreSwoosh(int boxX, int boxY, int boxH, Color metal, Color metalDim)
-    {
-        // Two parallel strokes that leave the left of the plate and curl down, matching the original bracket.
-        DrawCurve(boxX + 2, boxY + 10, boxX - 46, boxY + boxH + 10, -22f, metal, 2.2f);
-        DrawCurve(boxX + 2, boxY + 18, boxX - 34, boxY + boxH + 16, -16f, metalDim, 1.6f);
-    }
-
-    private static void DrawLives(int screenWidth, int screenHeight, int lives)
+    private void DrawLives(int screenWidth, float h, float refW, int lives)
     {
         int shown = Math.Clamp(lives, 0, 8);
         if (shown == 0) return;
 
-        const int radius = 13;
-        const int gap = 8;
-        int rowW = shown * (radius * 2) + (shown - 1) * gap;
-        int cx0 = screenWidth - 56 - rowW + radius;
-        int cy = screenHeight - 52;
-        var metal = new Color((byte)176, (byte)186, (byte)196, (byte)230);
+        // Right-anchor all life sprites preserving 4:3 proportions:
+        // screenX = screenWidth - (1.0 - normX) * refW
+        float AnchorX(float normX) => screenWidth - (1f - normX) * refW;
 
-        float left = cx0 - radius - 6;
-        float right = cx0 + (shown - 1) * (radius * 2 + gap) + radius + 6;
-        float top = cy - radius - 8;
-        float bottom = cy + radius + 10;
-        DrawCurve(left, top, left - 4, bottom, 16f, metal, 2f);
-        DrawCurve(right, top, right + 4, bottom, -16f, metal, 2f);
+        // Gameplay.nmo constants: LifeBall Start x = 0.95, Offset LifeBalls x = 0.039, LifeEnd Start x = 0.929
+        const float step = 0.039f;
+        const float ballW = 0.9934f - 0.9496f; // 0.0438
+        const float ballH = 0.9438f - 0.8854f; // 0.0584
 
-        for (int i = 0; i < shown; i++)
+        if (_atlas.Id != 0)
         {
-            int cx = cx0 + i * (radius * 2 + gap);
-            DrawLifeSphere(cx, cy, radius);
+            // 1. Right C-bracket (Interface_Life_Startbogen: [0.8906, 0.85, 0.9813, 0.9771])
+            var startDest = new Rectangle(
+                AnchorX(0.8906f),
+                0.85f * h,
+                (0.9813f - 0.8906f) * refW,
+                (0.9771f - 0.85f) * h
+            );
+            Raylib.DrawTexturePro(_atlas, SrcLifeStart, startDest, Vector2.Zero, 0f, Color.White);
+
+            // 2. Life spheres (right-to-left)
+            for (int i = 0; i < shown; i++)
+            {
+                float normLeft = 0.95f - (i + 1) * step;
+                var ballDest = new Rectangle(
+                    AnchorX(normLeft),
+                    0.8854f * h,
+                    ballW * refW,
+                    ballH * h
+                );
+                Raylib.DrawTexturePro(_atlas, SrcLifeBall, ballDest, Vector2.Zero, 0f, Color.White);
+            }
+
+            // 3. Left end-cap (Interface_Life_End: width 0.0234, y [0.8813..0.9438])
+            float endLeft = 0.929f - shown * step;
+            var endDest = new Rectangle(
+                AnchorX(endLeft),
+                0.8813f * h,
+                (0.9522f - 0.9288f) * refW,
+                (0.9438f - 0.8813f) * h
+            );
+            Raylib.DrawTexturePro(_atlas, SrcLifeEnd, endDest, Vector2.Zero, 0f, Color.White);
+        }
+        else
+        {
+            int radius = Math.Max(8, (int)(ballH * h * 0.45f));
+            int cy = (int)(0.914f * h);
+            for (int i = 0; i < shown; i++)
+            {
+                int cx = (int)AnchorX(0.95f - (i + 1) * step + ballW * 0.5f);
+                Raylib.DrawCircle(cx, cy, radius, Color.LightGray);
+            }
         }
     }
 
-        private static void DrawLifeSphere(int cx, int cy, int radius)
+    private void DrawBanner(int screenWidth, int screenHeight)
     {
-        // Outer Glow
-        for (int i = 1; i <= 3; i++)
-        { 
-            Raylib.DrawCircle(cx, cy, radius + i * 2, new Color((byte)100, (byte)120, (byte)150, (byte)(50 / i)));
-        }
+        float fade = Math.Clamp(_bannerTimer / MathF.Min(0.6f, _bannerDuration), 0f, 1f);
+        byte alpha = (byte)(fade * 255f);
+        var col = new Color(_bannerColor.R, _bannerColor.G, _bannerColor.B, alpha);
+        var shadow = new Color((byte)0, (byte)0, (byte)0, (byte)(fade * 150f));
+        float y = screenHeight * 0.12f;
 
-        // Main Sphere
-        Raylib.DrawCircle(cx, cy, radius, new Color((byte)92, (byte)100, (byte)110, (byte)255));
-        Raylib.DrawCircle(cx - 1, cy - 1, radius - 2, new Color((byte)168, (byte)176, (byte)186, (byte)255));
-        Raylib.DrawCircle(cx - 3, cy - 4, radius - 6, new Color((byte)226, (byte)232, (byte)238, (byte)255));
-        Raylib.DrawCircle(cx - 5, cy - 6, 3.5f, new Color((byte)255, (byte)255, (byte)255, (byte)230));
-    }
-
-    private static void DrawCurve(float x0, float y0, float x1, float y1, float bulge, Color color, float thick)
-    {
-        const int steps = 14;
-        Vector2 prev = new(x0, y0);
-        float dx = x1 - x0;
-        float dy = y1 - y0;
-        float len = MathF.Sqrt(dx * dx + dy * dy);
-        if (len < 1f) return;
-        float nx = -dy / len;
-        float ny = dx / len;
-        for (int i = 1; i <= steps; i++)
+        if (_font != null && _font.Ready)
         {
-            float t = i / (float)steps;
-            float bow = MathF.Sin(t * MathF.PI) * bulge;
-            var p = new Vector2(x0 + dx * t + nx * bow, y0 + dy * t + ny * bow);
-            Raylib.DrawLineEx(prev, p, thick, color);
-            prev = p;
+            float size = Math.Clamp(screenHeight * 0.042f, 22f, 38f);
+            _font.DrawCentered(_bannerText, screenWidth * 0.5f + 2f, y + 2f, size, shadow);
+            _font.DrawCentered(_bannerText, screenWidth * 0.5f, y, size, col);
         }
-    }
-
-    private static int MeasureSpaced(string text, int fontSize, int spacing)
-    {
-        int w = 0;
-        for (int i = 0; i < text.Length; i++)
+        else
         {
-            w += Raylib.MeasureText(text[i].ToString(), fontSize);
-            if (i + 1 < text.Length) w += spacing;
-        }
-        return w;
-    }
-
-    private static void DrawSpaced(string text, int x, int y, int fontSize, int spacing, Color color)
-    {
-        int cursor = x;
-        foreach (char ch in text)
-        {
-            string s = ch.ToString();
-            Raylib.DrawText(s, cursor, y, fontSize, color);
-            cursor += Raylib.MeasureText(s, fontSize) + spacing;
+            int fontSize = 26;
+            int tw = Raylib.MeasureText(_bannerText, fontSize);
+            Raylib.DrawText(_bannerText, (screenWidth - tw) / 2 + 2, (int)y + 2, fontSize, shadow);
+            Raylib.DrawText(_bannerText, (screenWidth - tw) / 2, (int)y, fontSize, col);
         }
     }
 
@@ -181,5 +233,11 @@ public class GameHUD
         Raylib.DrawText("Space (Hold): Overview Tilt", hx + 10, hy + 90, 13, Color.White);
         Raylib.DrawText("R: Respawn at Checkpoint", hx + 10, hy + 110, 13, Color.White);
         Raylib.DrawText("1 - 9: Switch Level Directly", hx + 10, hy + 130, 12, Color.SkyBlue);
+    }
+
+    public void Dispose()
+    {
+        _font?.Dispose();
+        if (_atlas.Id != 0) Raylib.UnloadTexture(_atlas);
     }
 }

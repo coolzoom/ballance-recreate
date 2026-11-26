@@ -28,6 +28,7 @@ public class GameEngine : IDisposable
 
     public string? ScreenshotPath { get; init; }
     public int StartLevel { get; init; } = 1;
+    public BallMaterial? StartMaterial { get; init; }
 
     public GameEngine(string gameRoot, int width = 1280, int height = 720)
     {
@@ -53,13 +54,14 @@ public class GameEngine : IDisposable
         _audioManager = new AudioManager(soundsDir);
         _skybox = new SkyboxRenderer(_textureManager);
         _particles = new ParticleSystem();
-        _hud = new GameHUD();
+        _hud = new GameHUD(texturesDir);
         _menu = new MainMenu(texturesDir, soundsDir);
 
         // --shot of a level skips the menu. Level 0 captures the menu itself.
         bool shotIntoLevel = ScreenshotPath != null && StartLevel > 0;
         _levelManager = new LevelManager(_gameRoot, _textureManager, _audioManager, _particles, _hud, announceStart: shotIntoLevel && StartLevel <= 1);
         if (shotIntoLevel && StartLevel > 1) _levelManager.LoadLevel(StartLevel);
+        if (StartMaterial.HasValue) _levelManager.Player.SetMaterial(StartMaterial.Value);
         AimCamera();
         UpdateSkyTheme(_levelManager.CurrentLevelNumber);
         _playing = shotIntoLevel;
@@ -330,6 +332,7 @@ public class GameEngine : IDisposable
         _disposed = true;
 
         _menu?.Dispose();
+        _hud?.Dispose();
         _textureManager?.Dispose();
         _audioManager?.Dispose();
         _skybox?.Dispose();

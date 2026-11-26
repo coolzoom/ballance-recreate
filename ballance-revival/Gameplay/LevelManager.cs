@@ -100,10 +100,11 @@ public class LevelManager
         _ballStone = Make("Ball_Stone");
         _ballPaper = Make("Ball_Paper");
 
-        // The ball never receives its own blob shadow
-        _ballWood.SetSurface(new Vector3(0.22f, 20f, 0f));
-        _ballStone.SetSurface(new Vector3(0.45f, 48f, 0f));
-        _ballPaper.SetSurface(new Vector3(0.06f, 8f, 0f));
+        // The ball never receives its own blob shadow (z=0); specular matches Balls.nmo finish:
+        // wood = soft satin, stone = matte rough rock, paper = flat matte.
+        _ballWood.SetSurface(new Vector3(0.16f, 18f, 0f));
+        _ballStone.SetSurface(new Vector3(0.08f, 10f, 0f));
+        _ballPaper.SetSurface(new Vector3(0.04f, 6f, 0f));
         Prefabs.Get("P_Extra_Point")?.SetSurface(new Vector3(0.6f, 64f, 1f));
         Prefabs.Get("P_Extra_Life")?.SetSurface(new Vector3(0.6f, 64f, 1f));
     }

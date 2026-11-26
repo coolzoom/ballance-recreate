@@ -36,14 +36,22 @@ public sealed class MainMenu : IDisposable
     private readonly Texture2D _hot;
     private readonly GameFont _font;
     private static readonly Color Ink = new(244, 246, 248, 255);
-    private readonly Rectangle _buttonSrc = new(2, 1, 252, 60);
+
+    // Exact button sub-rectangles from Menu.nmo (Button01_deselect/select.tga, 256x256)
+    private static readonly Rectangle SrcMainButton = new(0f, 0.5137f * 256f, 256f, (0.7451f - 0.5137f) * 256f);
+    private static readonly Rectangle SrcLevelButton = new(0f, 0.247f * 256f, 0.647f * 256f, (0.3686f - 0.247f) * 256f);
+    private static readonly Rectangle SrcBackButton = new(0.2392f * 256f, 0.7529f * 256f, (0.8666f - 0.2392f) * 256f, (0.9843f - 0.7529f) * 256f);
+    private static readonly Rectangle SrcYesNoButton = new(0f, 0.8235f * 256f, 0.226f * 256f, (0.9098f - 0.8235f) * 256f);
+
+    private enum ButtonStyle { Main, Level, Back, YesNo }
+
     private readonly Sound _click;
     private readonly bool _hasClick;
     private readonly Music _atmo;
     private readonly bool _hasAtmo;
     private bool _atmoOn;
 
-    private readonly List<(string Label, Rectangle Rect)> _items = [];
+    private readonly List<(string Label, Rectangle Rect, ButtonStyle Style)> _items = [];
     private int _columns = 1;
     private int _index;
     private float _creditsY = 160f;
@@ -207,6 +215,13 @@ public sealed class MainMenu : IDisposable
     {
         if (w != _laidOutW || h != _laidOutH) Layout(w, h);
 
+        // Subtle center column backing (M_BlackScreen from Menu.nmo: [0.3..0.7] in 4:3)
+        float refW = h * (4f / 3f);
+        float panelW = MathF.Min(w, refW * 0.44f);
+        float panelX = (w - panelW) * 0.5f;
+        byte panelAlpha = CoversGame ? (byte)155 : (byte)85;
+        Raylib.DrawRectangle((int)panelX, 0, (int)panelW, h, new Color((byte)14, (byte)18, (byte)28, panelAlpha));
+
         if (!CoversGame)
             DrawWordmark(w);
 
@@ -216,7 +231,7 @@ public sealed class MainMenu : IDisposable
         if (Page is MenuPage.ConfirmQuit or MenuPage.ConfirmLeave) DrawQuestion(w, h);
 
         for (int i = 0; i < _items.Count; i++)
-            DrawButton(_items[i].Rect, _items[i].Label, i == _index);
+            DrawButton(_items[i].Rect, _items[i].Label, _items[i].Style, i == _index);
     }
 
     private MenuCommand Escape()
@@ -309,81 +324,121 @@ public sealed class MainMenu : IDisposable
         _laidOutH = h;
         _items.Clear();
 
+        float refW = h * (4f / 3f);
+
         switch (Page)
         {
             case MenuPage.Main:
                 _columns = 1;
-                Column(w, h, ["Start", "Highscore", "Optionen", "Credits", "Beenden"], 200);
+                // Menu.nmo M_Main_But_1..5: height 0.0938*h, width 0.30*refW (4.26:1 matching 256x59.2 sprite)
+                Column(w, h, refW, ["Start", "Highscore", "Optionen", "Credits", "Beenden"], h * 0.21f, ButtonStyle.Main);
                 break;
             case MenuPage.Levels:
                 _columns = 2;
-                LevelGrid(w, h);
+                LevelGrid(w, h, refW);
                 break;
             case MenuPage.Highscore:
             case MenuPage.Options:
             case MenuPage.Credits:
                 _columns = 1;
-                Column(w, h, ["Zur\u00fcck"], h - 120);
+                Column(w, h, refW, ["Zur\u00fcck"], h * 0.84f, ButtonStyle.Back);
                 break;
             case MenuPage.Pause:
                 _columns = 1;
-                Column(w, h, ["Zur\u00fcck zum Spiel", "Level Neustart", "Level Beenden"], h * 0.34f);
+                Column(w, h, refW, ["Zur\u00fcck zum Spiel", "Level Neustart", "Level Beenden"], h * 0.30f, ButtonStyle.Main);
                 break;
             case MenuPage.ConfirmQuit:
             case MenuPage.ConfirmLeave:
-                _columns = 1;
-                Column(w, h, ["Ja", "Nein"], h * 0.42f);
+                _columns = 2;
+                YesNoRow(w, h, refW);
                 break;
         }
 
         if (_index >= _items.Count) _index = 0;
     }
 
-    private void Column(int w, int h, string[] labels, float y)
+    private void Column(int w, int h, float refW, string[] labels, float y, ButtonStyle style)
     {
-        float bw = Math.Clamp(w * 0.40f, 340f, 540f);
-        float bh = Math.Clamp(h * 0.072f, 44f, 62f);
+        float bh = Math.Clamp(h * 0.0938f, 48f, 78f);
+        float aspect = style == ButtonStyle.Back
+            ? SrcBackButton.Width / SrcBackButton.Height
+            : SrcMainButton.Width / SrcMainButton.Height;
+        float bw = bh * aspect;
+        float gap = bh * 0.24f;
         float x = (w - bw) / 2f;
         for (int i = 0; i < labels.Length; i++)
         {
-            _items.Add((labels[i], new Rectangle(x, y, bw, bh)));
-            y += bh + 8f;
+            _items.Add((labels[i], new Rectangle(x, y, bw, bh), style));
+            y += bh + gap;
         }
     }
 
-    private void LevelGrid(int w, int h)
+    private void YesNoRow(int w, int h, float refW)
     {
-        float bw = Math.Clamp(w * 0.28f, 240f, 380f);
-        float bh = Math.Clamp(h * 0.062f, 40f, 52f);
-        float gapX = 16f;
-        float gapY = 8f;
+        float bh = Math.Clamp(h * 0.062f, 36f, 52f);
+        float bw = bh * (SrcYesNoButton.Width / SrcYesNoButton.Height);
+        float gap = bh * 0.9f;
+        float totalW = bw * 2f + gap;
+        float x0 = (w - totalW) / 2f;
+        float y = h * 0.50f;
+        _items.Add(("Ja", new Rectangle(x0, y, bw, bh), ButtonStyle.YesNo));
+        _items.Add(("Nein", new Rectangle(x0 + bw + gap, y, bw, bh), ButtonStyle.YesNo));
+    }
+
+    private void LevelGrid(int w, int h, float refW)
+    {
+        float bh = Math.Clamp(h * 0.056f, 34f, 48f);
+        float bw = bh * (SrcLevelButton.Width / SrcLevelButton.Height);
+        float gapX = bh * 0.6f;
+        float gapY = bh * 0.28f;
         float totalW = bw * 2f + gapX;
         float x0 = (w - totalW) / 2f;
-        float y0 = 168f;
+        float y0 = h * 0.20f;
         for (int i = 0; i < 12; i++)
         {
             int col = i % 2;
             int row = i / 2;
             float x = x0 + col * (bw + gapX);
             float y = y0 + row * (bh + gapY);
-            _items.Add(($"Level {i + 1}", new Rectangle(x, y, bw, bh)));
+            _items.Add(($"Level {i + 1}", new Rectangle(x, y, bw, bh), ButtonStyle.Level));
         }
 
-        float backW = Math.Clamp(w * 0.28f, 240f, 380f);
-        float backY = y0 + 6 * (bh + gapY) + 6f;
-        _items.Add(("Zur\u00fcck", new Rectangle((w - backW) / 2f, backY, backW, bh)));
+        float backH = Math.Clamp(h * 0.0938f, 48f, 72f);
+        float backW = backH * (SrcBackButton.Width / SrcBackButton.Height);
+        float backY = MathF.Min(h - backH - 20f, y0 + 6 * (bh + gapY) + 14f);
+        _items.Add(("Zur\u00fcck", new Rectangle((w - backW) / 2f, backY, backW, backH), ButtonStyle.Back));
     }
 
-    private void DrawButton(Rectangle dest, string label, bool hot)
+    private void DrawButton(Rectangle dest, string label, ButtonStyle style, bool hot)
     {
+        Rectangle src = style switch
+        {
+            ButtonStyle.Level => SrcLevelButton,
+            ButtonStyle.Back => SrcBackButton,
+            ButtonStyle.YesNo => SrcYesNoButton,
+            _ => SrcMainButton
+        };
+
         Texture2D tex = hot ? _hot : _idle;
         if (tex.Id != 0)
-            Raylib.DrawTexturePro(tex, _buttonSrc, dest, Vector2.Zero, 0f, Color.White);
+            Raylib.DrawTexturePro(tex, src, dest, Vector2.Zero, 0f, Color.White);
 
-        float size = dest.Height * 0.52f;
-        // The chrome sphere sits on the left cap; center the label in the bar.
-        float textX = dest.X + dest.Width * 0.58f;
-        float textY = dest.Y + (dest.Height - size) / 2f - 1f;
+        float size = style switch
+        {
+            ButtonStyle.Level => dest.Height * 0.56f,
+            ButtonStyle.YesNo => dest.Height * 0.52f,
+            _ => dest.Height * 0.42f
+        };
+        // Offset text center past the left chrome sphere cap (except Yes/No pill which has no sphere)
+        float textCenterFrac = style switch
+        {
+            ButtonStyle.YesNo => 0.50f,
+            ButtonStyle.Back => 0.60f,
+            ButtonStyle.Level => 0.55f,
+            _ => 0.56f
+        };
+        float textX = dest.X + dest.Width * textCenterFrac;
+        float textY = dest.Y + (dest.Height - size) * (style == ButtonStyle.Main ? 0.42f : 0.48f);
         _font.DrawCentered(label, textX, textY, size, Ink);
     }
 
@@ -469,6 +524,8 @@ public sealed class MainMenu : IDisposable
             return default;
         Texture2D tex = Raylib.LoadTextureFromImage(img);
         Raylib.UnloadImage(img);
+        if (tex.Id != 0)
+            Raylib.SetTextureFilter(tex, TextureFilter.Bilinear);
         return tex;
     }
 

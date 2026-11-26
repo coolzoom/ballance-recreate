@@ -155,23 +155,28 @@ public sealed class GameFont : IDisposable
             Raylib.SetTextureFilter(_tex, TextureFilter.Bilinear);
     }
 
-    public float Measure(string text, float height)
+    public float Measure(string text, float height, float aspectX = 1f, float extraSpacing = 0f)
     {
-        float scale = height / 32f;
+        float scaleY = height / 32f;
+        float scaleX = scaleY * aspectX;
         float w = 0f;
-        foreach (char ch in text)
-            w += Advance(ch) * scale;
+        for (int idx = 0; idx < text.Length; idx++)
+        {
+            w += Advance(text[idx]) * scaleX;
+            if (idx + 1 < text.Length) w += extraSpacing * scaleX;
+        }
         return w;
     }
 
-    public void Draw(string text, float x, float y, float height, Color color)
+    public void Draw(string text, float x, float y, float height, Color color, float aspectX = 1f, float extraSpacing = 0f)
     {
         if (_tex.Id == 0) return;
-        float scale = height / 32f;
+        float scaleY = height / 32f;
+        float scaleX = scaleY * aspectX;
         float pen = x;
-        foreach (char ch in text)
+        for (int idx = 0; idx < text.Length; idx++)
         {
-            int i = Glyph(ch);
+            int i = Glyph(text[idx]);
             float u = _g[i];
             float v = _g[i + 1];
             float gw = _g[i + 2];
@@ -181,16 +186,22 @@ public sealed class GameFont : IDisposable
             if (gw > 0f && gh > 0f)
             {
                 var src = new Rectangle(u, v, gw, gh);
-                var dest = new Rectangle(pen + pre * scale, y, gw * scale, gh * scale);
+                var dest = new Rectangle(pen + pre * scaleX, y, gw * scaleX, gh * scaleY);
                 Raylib.DrawTexturePro(_tex, src, dest, Vector2.Zero, 0f, color);
             }
-            pen += (pre + gw + post) * scale;
+            pen += (pre + gw + post) * scaleX;
+            if (idx + 1 < text.Length) pen += extraSpacing * scaleX;
         }
     }
 
-    public void DrawCentered(string text, float cx, float y, float height, Color color)
+    public void DrawCentered(string text, float cx, float y, float height, Color color, float aspectX = 1f, float extraSpacing = 0f)
     {
-        Draw(text, cx - Measure(text, height) / 2f, y, height, color);
+        Draw(text, cx - Measure(text, height, aspectX, extraSpacing) / 2f, y, height, color, aspectX, extraSpacing);
+    }
+
+    public void DrawRight(string text, float rightX, float y, float height, Color color, float aspectX = 1f, float extraSpacing = 0f)
+    {
+        Draw(text, rightX - Measure(text, height, aspectX, extraSpacing), y, height, color, aspectX, extraSpacing);
     }
 
     private int Glyph(char ch)

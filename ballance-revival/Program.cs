@@ -35,7 +35,8 @@ public static class Program
 
         string? shot = args.Length > 1 && args[0] == "--shot" ? Path.GetFullPath(args[1]) : null;
         int startLevel = args.Length > 2 && int.TryParse(args[2], out int lv) ? Math.Clamp(lv, 0, 12) : 1;
-        using var engine = new GameEngine(gameRoot, 1280, 720) { ScreenshotPath = shot, StartLevel = startLevel };
+        Gameplay.BallMaterial? startMat = args.Length > 3 && Enum.TryParse<Gameplay.BallMaterial>(args[3], true, out var mat) ? mat : null;
+        using var engine = new GameEngine(gameRoot, 1280, 720) { ScreenshotPath = shot, StartLevel = startLevel, StartMaterial = startMat };
         engine.Run();
     }
 
