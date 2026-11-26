@@ -199,7 +199,9 @@ public class BallPlayer
     public void ResolvePostBoxStep(IReadOnlyList<MovableBox>? boxes, TriangleMeshCollider collider, float dt)
     {
         if (boxes is null || boxes.Count == 0) return;
-        ResolveBoxCollisions(boxes, dt);
+        // Crates are already settled against walls and each other; move only the ball here
+        // so a heavy ball pressing a wall-jammed crate cannot push it into a wall or neighbor crate.
+        ResolveBoxCollisions(boxes, dt, moveBoxes: false);
         if (collider.CollideSphere(Position, Properties.Radius, out Vector3 corr, out Vector3 n, out bool g))
         {
             Position += corr;
@@ -218,7 +220,7 @@ public class BallPlayer
     /// Momentum is exchanged by inverse mass so the ball pushes crates naturally without
     /// tunneling, getting sucked in, or launching onto the top face.
     /// </summary>
-    private void ResolveBoxCollisions(IReadOnlyList<MovableBox>? boxes, float dt)
+    private void ResolveBoxCollisions(IReadOnlyList<MovableBox>? boxes, float dt, bool moveBoxes = true)
     {
         if (boxes is null) return;
 
@@ -281,7 +283,7 @@ public class BallPlayer
                 box.AxisZ * localNormal.Z
             );
 
-            float invMassBox = 1f / box.Mass;
+            float invMassBox = moveBoxes ? (1f / box.Mass) : 0f;
             float invMassSum = invMassBall + invMassBox;
             float ballShare = invMassBall / invMassSum;
             float boxShare = invMassBox / invMassSum;

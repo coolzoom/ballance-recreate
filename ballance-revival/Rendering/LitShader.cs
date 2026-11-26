@@ -48,7 +48,7 @@ public static class LitShader
         uniform vec3 sunTint;
         uniform vec3 sunDir;
         uniform vec4 ballPos;        // xyz, radius
-        uniform vec3 surface;        // specular strength, specular power, receives ball shadow
+        uniform vec4 surface;        // x: specStrength, y: specPower, z: receivesBallShadow, w: >0.5 sphere env-map / <-0.5 self-lit
         uniform int lightCount;
         uniform vec4 lightPos[MAX_LIGHTS];   // xyz, radius
         uniform vec3 lightColor[MAX_LIGHTS];
@@ -77,27 +77,59 @@ public static class LitShader
 
         void main()
         {
-            vec4 texel = texture(texture0, fragTexCoord) * colDiffuse;
-            if (texel.a < 0.04) discard;
-
             vec3 n = normalize(fragNormal);
             if (!gl_FrontFacing) n = -n;
             vec3 toView = viewPos - fragWorld;
             float dist = length(toView);
             vec3 v = toView / max(dist, 1e-4);
 
+            bool isEnvMap = surface.w > 0.5;
+            bool isEmissive = surface.w < -0.5;
+
+            vec4 texel;
+            if (isEnvMap)
+            {
+                // Virtools spherical environment mapping (Direct3D8 sphere-map reflection in view space)
+                vec3 camRight = normalize(cross(vec3(0.0, 1.0, 0.0), v));
+                vec3 camUp = cross(v, camRight);
+                vec3 r = reflect(-v, n);
+                vec3 rv = vec3(dot(r, camRight), dot(r, camUp), dot(r, -v));
+                float m = 2.0 * sqrt(rv.x * rv.x + rv.y * rv.y + (rv.z + 1.0) * (rv.z + 1.0) + 1e-4);
+                vec2 envUV = vec2(rv.x / m + 0.5, -rv.y / m + 0.5);
+                vec3 envCol = texture(texture0, envUV).rgb;
+                // Blend chrome reflection with material diffuse tint so steel rails and colored trafos gleam
+                vec3 chrome = mix(envCol * colDiffuse.rgb * 1.45, envCol * (0.55 + 0.65 * colDiffuse.rgb), 0.45);
+                texel = vec4(chrome, colDiffuse.a);
+            }
+            else
+            {
+                texel = texture(texture0, fragTexCoord) * colDiffuse;
+            }
+            if (texel.a < 0.04) discard;
+
             float shadow = ballShadow();
             float ndl = dot(n, sunDir);
-            bool isBall = surface.z < 0.5 && surface.x > 0.0;
+            bool isBall = surface.z < 0.5 && surface.x > 0.0 && !isEnvMap && !isEmissive;
 
             vec3 light;
-            if (isBall)
+            if (isEmissive)
+            {
+                // Self-illuminated lantern glass
+                light = vec3(1.15, 1.12, 1.05);
+            }
+            else if (isBall)
             {
                 // Hero ball lighting: neutral-warm directional shading with deep shadowed underside
-                // matching the original Virtools ball rendering instead of sky-tinted ambient wash.
                 vec3 ballAmbient = mix(vec3(0.16, 0.16, 0.18), mix(vec3(0.54), skyTint * 0.52, 0.35), n.y * 0.5 + 0.5);
                 float ballWrap = clamp((ndl + 0.12) / 1.12, 0.0, 1.0);
                 light = ballAmbient + mix(vec3(1.0, 0.98, 0.94), sunTint, 0.25) * (0.76 * ballWrap);
+            }
+            else if (isEnvMap)
+            {
+                // Metallic chrome surfaces keep bright sky/sun reflection contrast
+                vec3 envAmbient = mix(groundTint * 0.55, skyTint * 0.92, n.y * 0.5 + 0.5) * 0.78;
+                float envWrap = clamp((ndl + 0.25) / 1.25, 0.0, 1.0);
+                light = envAmbient * (1.0 - 0.35 * shadow) + sunTint * (0.55 * envWrap) * (1.0 - shadow);
             }
             else
             {
@@ -107,7 +139,7 @@ public static class LitShader
             }
 
             vec3 spec = vec3(0.0);
-            if (surface.x > 0.0 && ndl > 0.0)
+            if (surface.x > 0.0 && ndl > 0.0 && !isEmissive)
             {
                 vec3 h = normalize(sunDir + v);
                 spec = sunTint * surface.x * pow(max(dot(n, h), 0.0), surface.y) * (1.0 - shadow);
@@ -122,15 +154,14 @@ public static class LitShader
                 if (att <= 0.0) continue;
                 att *= att;
                 float lambert = max(dot(n, l / ld), 0.0) * 0.75 + 0.25;
-                // Keep flame bounce subtle on the ball so it does not turn magenta near start/checkpoint grates
                 float lightScale = isBall ? 0.35 : 1.0;
                 light += lightColor[i] * att * lambert * lightScale;
             }
 
-            // Subtle Fresnel rim on lit edges only (keeps shadowed undersides grounded)
-            float fresnel = pow(1.0 - max(dot(n, v), 0.0), 3.2) * clamp(ndl * 0.5 + 0.5, 0.0, 1.0);
+            // Subtle Fresnel rim on lit edges (stronger metallic sheen on env-mapped chrome)
+            float fresnel = pow(1.0 - max(dot(n, v), 0.0), isEnvMap ? 2.4 : 3.2) * clamp(ndl * 0.5 + 0.5, 0.0, 1.0);
             vec3 rimColor = mix(skyTint, sunTint, max(dot(n, sunDir), 0.0));
-            float rimStrength = isBall ? 0.05 : 0.10;
+            float rimStrength = isEnvMap ? 0.28 : (isBall ? 0.05 : 0.08);
             vec3 color = texel.rgb * light + spec + rimColor * fresnel * rimStrength;
             color = softClip(color);
 
@@ -146,9 +177,9 @@ public static class LitShader
     private static int _viewPosLoc, _fogColorLoc, _fogDensityLoc, _fogHeightLoc;
     private static int _skyTintLoc, _groundTintLoc, _sunTintLoc, _sunDirLoc;
     private static int _ballPosLoc, _surfaceLoc, _lightCountLoc, _lightPosLoc, _lightColorLoc;
-    private static Vector3 _surface = new(-1f);
+    private static Vector4 _surface = new(-1f);
 
-    public static readonly Vector3 DefaultSurface = new(0.10f, 24f, 1f);
+    public static readonly Vector4 DefaultSurface = new(0.08f, 24f, 1f, 0f);
 
     public static void Load()
     {
@@ -216,17 +247,17 @@ public static class LitShader
     }
 
     /// <summary>Per-draw surface response; skipped when unchanged since every set is a GL call.</summary>
-    public static void SetSurface(Vector3 surface)
+    public static void SetSurface(Vector4 surface)
     {
         if (Shader.Id == 0 || surface == _surface) return;
         _surface = surface;
-        Raylib.SetShaderValue(Shader, _surfaceLoc, surface, ShaderUniformDataType.Vec3);
+        Raylib.SetShaderValue(Shader, _surfaceLoc, surface, ShaderUniformDataType.Vec4);
     }
 
     public static void Unload()
     {
         if (Shader.Id != 0) Raylib.UnloadShader(Shader);
         Shader = default;
-        _surface = new Vector3(-1f);
+        _surface = new Vector4(-1f);
     }
 }

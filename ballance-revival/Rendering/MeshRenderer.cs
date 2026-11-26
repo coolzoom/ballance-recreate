@@ -17,7 +17,7 @@ public unsafe class RenderSubmesh : IDisposable
 
     public bool Alpha;
     public bool Additive;
-    public Vector3 Surface = LitShader.DefaultSurface;
+    public Vector4 Surface = LitShader.DefaultSurface;
 
     /// <summary>Draws without touching blend or depth state; the caller owns that.</summary>
     public void DrawRaw(Matrix4x4 transform)
@@ -72,7 +72,7 @@ public class RenderMesh : IDisposable
         }
     }
 
-    public void SetSurface(Vector3 surface)
+    public void SetSurface(Vector4 surface)
     {
         foreach (var submesh in Submeshes)
             submesh.Surface = surface;
@@ -191,12 +191,14 @@ public unsafe class MeshRenderer : IDisposable
             Material mat = Raylib.LoadMaterialDefault();
             if (LitShader.Shader.Id != 0) mat.Shader = LitShader.Shader;
 
-            // Resolve material texture and tint
+            // Resolve material texture, tint, specular gloss, and environment mapping
             Color tint = Color.White;
             Texture2D texture = _textureManager.GetTexture(string.Empty);
 
             bool alpha = false;
             bool additive = false;
+            Vector4 surface = LitShader.DefaultSurface;
+
             if (_level.Materials.TryGetValue((int)submesh.MaterialObjectIndex, out var nmoMat))
             {
                 uint argb = nmoMat.DiffuseColor;
@@ -208,28 +210,70 @@ public unsafe class MeshRenderer : IDisposable
                 alpha = nmoMat.AlphaBlend || a < 250;
                 additive = nmoMat.Additive;
 
+                string texFile = string.Empty;
                 if (_level.Textures.TryGetValue((int)nmoMat.TextureObjectIndex, out var nmoTex))
                 {
-                    texture = _textureManager.GetTexture(nmoTex.FileName);
-                    tint = new Color((byte)255, (byte)255, (byte)255, a);
+                    texFile = nmoTex.FileName;
+                    texture = _textureManager.GetTexture(texFile);
+                    // Preserve diffuse tint on opaque textured materials (rails, transformers, floor sides),
+                    // while keeping additive/shadow decals untinted when their diffuse is black.
+                    bool hasNonBlackDiffuse = (r | g | b) != 0;
+                    tint = (!alpha && !additive && hasNonBlackDiffuse)
+                        ? new Color(r, g, b, a)
+                        : new Color((byte)255, (byte)255, (byte)255, a);
                 }
                 else
                 {
                     tint = new Color(r, g, b, a);
                 }
+
+                // Derive specular gloss, spherical env-mapping, and self-lit emissive from NMO material
+                bool isEnvMap = IsEnvironmentMapTexture(texFile);
+                uint emisRgb = nmoMat.EmissiveColor & 0x00FFFFFF;
+                bool isSelfLit = !alpha && !additive && emisRgb == 0x00FFFFFF;
+
+                float specLum = (
+                    ((nmoMat.SpecularColor >> 16) & 0xFF) * 0.299f +
+                    ((nmoMat.SpecularColor >> 8) & 0xFF) * 0.587f +
+                    (nmoMat.SpecularColor & 0xFF) * 0.114f) / 255f;
+
+                float specStrength = 0f;
+                float specPower = 24f;
+                if (isEnvMap)
+                {
+                    // Metallic chrome (rails, transformers, dome, extra life/point spheres)
+                    specStrength = MathF.Max(0.45f, specLum * 0.65f);
+                    specPower = Math.Clamp(nmoMat.Power > 1f ? nmoMat.Power * 1.4f : 28f, 16f, 64f);
+                }
+                else if (nmoMat.Power > 0.5f && specLum > 0.05f)
+                {
+                    // Non-env materials with explicit Virtools specular power (metals, wood, floor tops)
+                    specStrength = MathF.Min(0.45f, specLum * 0.35f);
+                    specPower = Math.Clamp(nmoMat.Power, 6f, 96f);
+                }
+
+                float mode = isEnvMap ? 1f : (isSelfLit ? -1f : 0f);
+                surface = new Vector4(specStrength, specPower, 1f, mode);
             }
 
             Raylib.SetMaterialTexture(ref mat, MaterialMapIndex.Albedo, texture);
             mat.Maps[(int)MaterialMapIndex.Albedo].Color = tint;
 
-            var render = new RenderSubmesh(mesh, mat) { Alpha = alpha, Additive = additive };
+            var render = new RenderSubmesh(mesh, mat) { Alpha = alpha, Additive = additive, Surface = surface };
             // Blended decals (baked shadows, glows) should neither shine nor be darkened twice
-            if (alpha) render.Surface = new Vector3(0f, 1f, additive ? 0f : 1f);
+            if (alpha) render.Surface = new Vector4(0f, 1f, additive ? 0f : 1f, 0f);
             renderMesh.Submeshes.Add(render);
         }
 
         return renderMesh;
     }
+
+    private static bool IsEnvironmentMapTexture(string fileName) =>
+        !string.IsNullOrEmpty(fileName) && (
+            fileName.Contains("Environment", StringComparison.OrdinalIgnoreCase) ||
+            fileName.Contains("_env", StringComparison.OrdinalIgnoreCase) ||
+            fileName.StartsWith("ExtraBall", StringComparison.OrdinalIgnoreCase)
+        );
 
     private static void ComputeBounds(NmoMesh nmoMesh, RenderMesh renderMesh)
     {

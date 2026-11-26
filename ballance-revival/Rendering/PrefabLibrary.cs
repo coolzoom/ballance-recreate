@@ -50,7 +50,7 @@ public class Prefab : IDisposable
             Renderer.DrawMesh(part.Mesh!, part.WorldMatrix * world);
     }
 
-    public void SetSurface(Vector3 surface)
+    public void SetSurface(Vector4 surface)
     {
         foreach (var part in Parts)
             Renderer.GetOrCreateRenderMesh(part.Mesh!).SetSurface(surface);

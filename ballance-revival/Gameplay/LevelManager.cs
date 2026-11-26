@@ -102,11 +102,9 @@ public class LevelManager
 
         // The ball never receives its own blob shadow (z=0); specular matches Balls.nmo finish:
         // wood = soft satin, stone = matte rough rock, paper = flat matte.
-        _ballWood.SetSurface(new Vector3(0.16f, 18f, 0f));
-        _ballStone.SetSurface(new Vector3(0.08f, 10f, 0f));
-        _ballPaper.SetSurface(new Vector3(0.04f, 6f, 0f));
-        Prefabs.Get("P_Extra_Point")?.SetSurface(new Vector3(0.6f, 64f, 1f));
-        Prefabs.Get("P_Extra_Life")?.SetSurface(new Vector3(0.6f, 64f, 1f));
+        _ballWood.SetSurface(new Vector4(0.16f, 18f, 0f, 0f));
+        _ballStone.SetSurface(new Vector4(0.08f, 10f, 0f, 0f));
+        _ballPaper.SetSurface(new Vector4(0.04f, 6f, 0f, 0f));
     }
 
     public void LoadLevel(int levelNum, bool announce = true)

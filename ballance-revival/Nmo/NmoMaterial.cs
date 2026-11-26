@@ -39,6 +39,9 @@ public class NmoMaterial
     public string Name { get; set; } = string.Empty;
     public int ObjectIndex { get; set; }
     public uint DiffuseColor { get; set; } = 0xFFFFFFFF; // ARGB
+    public uint SpecularColor { get; set; } = 0xFF000000; // ARGB
+    public uint EmissiveColor { get; set; } = 0xFF000000; // ARGB
+    public float Power { get; set; } = 0f; // Virtools specular shininess exponent
     public uint TextureObjectIndex { get; set; } = uint.MaxValue;
     public uint Options { get; set; }
 
@@ -64,9 +67,9 @@ public class NmoMaterial
         {
             mat.DiffuseColor = obj.Chunk.ReadUInt32(); // Diffuse ARGB
             obj.Chunk.ReadUInt32(); // Ambient
-            obj.Chunk.ReadUInt32(); // Specular
-            obj.Chunk.ReadUInt32(); // Emissive
-            obj.Chunk.ReadUInt32(); // Shininess float
+            mat.SpecularColor = obj.Chunk.ReadUInt32(); // Specular ARGB
+            mat.EmissiveColor = obj.Chunk.ReadUInt32(); // Emissive ARGB
+            mat.Power = obj.Chunk.ReadFloat(); // Shininess exponent
             mat.TextureObjectIndex = obj.Chunk.ReadUInt32();
             obj.Chunk.ReadUInt32();
             obj.Chunk.ReadUInt32();

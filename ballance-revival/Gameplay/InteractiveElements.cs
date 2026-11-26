@@ -96,9 +96,10 @@ public class MovableBox
 {
     public Vector3 Position { get; set; }
     public Vector3 Velocity { get; set; }
-    // P_Box_Mesh spans -2.5..2.5 on every axis
+    // P_Box_Mesh spans -2.5..2.5 on every axis.
+    // Original Levelinit.nmo Physicalize_Convex: Mass=1.0, Friction=0.7, Elasticity=0.3, LinearDamp=0.1
     public Vector3 HalfExtents { get; } = new(2.5f, 2.5f, 2.5f);
-    public float Mass { get; } = 15.0f;
+    public float Mass { get; } = 1.0f;
     public bool IsGrounded { get; private set; }
     public Vector3 AxisX { get; } = Vector3.UnitX;
     public Vector3 AxisY { get; } = Vector3.UnitY;
@@ -205,11 +206,11 @@ public class MovableBox
     }
 
     // Kinetic friction coefficient applied (exponentially, frame-rate independent) to a
-    // box sliding on the floor.
-    public const float BoxKineticFriction = 2.5f;
+    // box sliding on the floor (matches original P_Box Friction=0.7 feel with Mass=1.0).
+    public const float BoxKineticFriction = 4.2f;
 
-    // Restitution used when two boxes collide / are pushed into each other.
-    public const float BoxRestitution = 0.05f;
+    // Restitution used when two boxes collide (original Elasticity=0.3, softened slightly for stacking).
+    public const float BoxRestitution = 0.15f;
 
     /// <summary>
     /// Exact 3D OBB-vs-OBB collision for Y-rotated crates (5 SAT axes: UnitY, A.X, A.Z, B.X, B.Z).
