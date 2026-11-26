@@ -283,7 +283,9 @@ public class BallPlayer
                 box.AxisZ * localNormal.Z
             );
 
-            float invMassBox = moveBoxes ? (1f / box.Mass) : 0f;
+            // Vertically-constrained slider blocks (e.g. P_Modul_34_Schiebestein) do not move horizontally
+            bool boxImmovable = !moveBoxes || (box.LockHorizontal && MathF.Abs(normal.Y) < 0.5f);
+            float invMassBox = boxImmovable ? 0f : (1f / box.Mass);
             float invMassSum = invMassBall + invMassBox;
             float ballShare = invMassBall / invMassSum;
             float boxShare = invMassBox / invMassSum;
@@ -309,10 +311,11 @@ public class BallPlayer
                 box.Velocity += boxImp;
             }
 
-            // Correct Coulomb tangential friction (jt is an impulse, same units as jn)
+            // Correct Coulomb tangential friction (skip on overhead ceiling contacts normal.Y < -0.5
+            // so a descending P_Modul_34 stone block never pins the player ball to the floor)
             Vector3 relTangent = relVel - normal * vn;
             float relTanSpeed = relTangent.Length();
-            if (relTanSpeed > 1e-5f && jn > 1e-6f)
+            if (relTanSpeed > 1e-5f && jn > 1e-6f && normal.Y > -0.5f)
             {
                 float jt = MathF.Min(BallBoxFriction * jn, relTanSpeed / invMassSum);
                 Vector3 tDir = relTangent / relTanSpeed;

@@ -188,7 +188,9 @@ public class LevelManager
             bool isWalkableModule = group.StartsWith("P_Modul_", StringComparison.OrdinalIgnoreCase)
                 || group.Equals("P_Dome", StringComparison.OrdinalIgnoreCase)
                 || group.Equals("PE_Levelende", StringComparison.OrdinalIgnoreCase);
-            if (!isWalkableModule || group.Equals("P_Modul_18", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!isWalkableModule
+                || group.Equals("P_Modul_18", StringComparison.OrdinalIgnoreCase)
+                || group.Equals("P_Modul_34", StringComparison.OrdinalIgnoreCase)) continue;
 
             var prefab = Prefabs.Get(PrefabKey(entity.Name));
             if (prefab == null) continue;
@@ -284,10 +286,49 @@ public class LevelManager
         foreach (var tp in CurrentLevel.TrafoPaperEntities)
             Transformers.Add(new TransformerTrigger(BallMaterial.Paper, tp.Position, tp));
 
-        // 5. Boxes
+        // 5. Boxes (P_Box + dynamic P_Modul_34 pushable crate & vertical sliding stone)
         foreach (var box in CurrentLevel.BoxEntities)
         {
             Boxes.Add(new MovableBox(box.Position, box));
+        }
+
+        if (CurrentLevel.Groups.TryGetValue("P_Modul_34", out var mod34s))
+        {
+            var mod34Prefab = Prefabs.Get("P_Modul_34");
+            if (mod34Prefab != null)
+            {
+                foreach (var entity in mod34s)
+                {
+                    foreach (var part in mod34Prefab.Parts)
+                    {
+                        Matrix4x4 world = part.WorldMatrix * entity.WorldMatrix;
+                        if (part.Name.Contains("Kiste", StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Pushable wooden crate underneath (mesh bounds: 2.05 x 2.05 x 2.5)
+                            Boxes.Add(new MovableBox(
+                                world.Translation, entity,
+                                halfExtents: new Vector3(2.05f, 2.05f, 2.5f),
+                                mass: 1.0f,
+                                lockHorizontal: false,
+                                worldMatrix: world,
+                                prefabKey: "P_Modul_34",
+                                partName: part.Name));
+                        }
+                        else if (part.Name.Contains("Schiebestein", StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Heavy stone block on vertical slider: drops down to bridge the gap once Kiste is pushed away
+                            Boxes.Add(new MovableBox(
+                                world.Translation, entity,
+                                halfExtents: new Vector3(2.5f, 2.5f, 2.5f),
+                                mass: 12.0f,
+                                lockHorizontal: true,
+                                worldMatrix: world,
+                                prefabKey: "P_Modul_34",
+                                partName: part.Name));
+                        }
+                    }
+                }
+            }
         }
 
         // 6. Puzzle Balls (P_Ball_Paper, P_Ball_Wood, P_Ball_Stone)
@@ -650,7 +691,7 @@ public class LevelManager
             }
 
             bool dynamic = group is "P_Extra_Point" or "P_Extra_Life" or "P_Box"
-                or "P_Ball_Wood" or "P_Ball_Stone" or "P_Ball_Paper" or "P_Modul_18";
+                or "P_Ball_Wood" or "P_Ball_Stone" or "P_Ball_Paper" or "P_Modul_18" or "P_Modul_34";
             var prefab = Prefabs.Get(PrefabKey(entity.Name));
             // Level copies of empty prefabs are untextured editor markers (reset arrows, flame volumes)
             if (prefab == null || prefab.Parts.Count == 0) continue;
@@ -704,10 +745,22 @@ public class LevelManager
 
         foreach (var box in Boxes)
         {
-            if (box.Entity == null) continue;
-            Matrix4x4 world = box.Entity.WorldMatrix;
+            var prefab = Prefabs.Get(box.PrefabKey);
+            if (prefab == null) continue;
+            Matrix4x4 world = box.RenderRotation;
             world.Translation = box.Position;
-            Prefabs.Get("P_Box")?.Draw(world);
+            if (box.PartName == null)
+            {
+                prefab.Draw(world);
+            }
+            else
+            {
+                foreach (var part in prefab.Parts)
+                {
+                    if (part.Mesh != null && part.Name == box.PartName)
+                        prefab.Renderer.DrawMesh(part.Mesh, world);
+                }
+            }
         }
 
         foreach (var pb in PuzzleBalls)

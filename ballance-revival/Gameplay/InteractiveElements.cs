@@ -96,34 +96,52 @@ public class MovableBox
 {
     public Vector3 Position { get; set; }
     public Vector3 Velocity { get; set; }
-    // P_Box_Mesh spans -2.5..2.5 on every axis.
+    // P_Box_Mesh spans -2.5..2.5 on every axis; P_Modul_34_Kiste is 2.05 x 2.05 x 2.5.
     // Original Levelinit.nmo Physicalize_Convex: Mass=1.0, Friction=0.7, Elasticity=0.3, LinearDamp=0.1
-    public Vector3 HalfExtents { get; } = new(2.5f, 2.5f, 2.5f);
-    public float Mass { get; } = 1.0f;
+    public Vector3 HalfExtents { get; }
+    public float Mass { get; }
+    public bool LockHorizontal { get; }
     public bool IsGrounded { get; private set; }
     public Vector3 AxisX { get; } = Vector3.UnitX;
     public Vector3 AxisY { get; } = Vector3.UnitY;
     public Vector3 AxisZ { get; } = Vector3.UnitZ;
+    public Matrix4x4 RenderRotation { get; } = Matrix4x4.Identity;
+    public string PrefabKey { get; } = "P_Box";
+    public string? PartName { get; }
     public NmoEntity? Entity { get; }
 
-    public MovableBox(Vector3 position, NmoEntity? entity = null)
+    public MovableBox(
+        Vector3 position,
+        NmoEntity? entity = null,
+        Vector3? halfExtents = null,
+        float mass = 1.0f,
+        bool lockHorizontal = false,
+        Matrix4x4? worldMatrix = null,
+        string prefabKey = "P_Box",
+        string? partName = null)
     {
         Position = position;
         Entity = entity;
+        HalfExtents = halfExtents ?? new Vector3(2.5f, 2.5f, 2.5f);
+        Mass = mass;
+        LockHorizontal = lockHorizontal;
+        PrefabKey = prefabKey;
+        PartName = partName;
 
-        // Extract horizontal orientation from entity WorldMatrix (e.g., rotated crates in Level 3)
-        if (entity != null)
+        Matrix4x4 m = worldMatrix ?? entity?.WorldMatrix ?? Matrix4x4.Identity;
+        var rot = m;
+        rot.Translation = Vector3.Zero;
+        RenderRotation = rot;
+
+        // Extract horizontal orientation from worldMatrix (e.g., rotated crates in Level 3 & P_Modul_34)
+        var rx = new Vector3(m.M11, 0f, m.M13);
+        var rz = new Vector3(m.M31, 0f, m.M33);
+        if (rx.LengthSquared() > 1e-4f && rz.LengthSquared() > 1e-4f)
         {
-            var m = entity.WorldMatrix;
-            var rx = new Vector3(m.M11, 0f, m.M13);
-            var rz = new Vector3(m.M31, 0f, m.M33);
-            if (rx.LengthSquared() > 1e-4f && rz.LengthSquared() > 1e-4f)
-            {
-                AxisX = Vector3.Normalize(rx);
-                AxisY = Vector3.UnitY;
-                AxisZ = Vector3.Normalize(Vector3.Cross(AxisX, AxisY));
-                if (Vector3.Dot(AxisZ, rz) < 0f) AxisZ = -AxisZ;
-            }
+            AxisX = Vector3.Normalize(rx);
+            AxisY = Vector3.UnitY;
+            AxisZ = Vector3.Normalize(Vector3.Cross(AxisX, AxisY));
+            if (Vector3.Dot(AxisZ, rz) < 0f) AxisZ = -AxisZ;
         }
     }
 
@@ -134,11 +152,17 @@ public class MovableBox
     public void Update(float dt, Physics.TriangleMeshCollider? collider = null)
     {
         // Apply gravity
-        Velocity = new Vector3(Velocity.X, Velocity.Y + BallPlayer.Gravity * dt, Velocity.Z);
+        Velocity = new Vector3(
+            LockHorizontal ? 0f : Velocity.X,
+            Velocity.Y + BallPlayer.Gravity * dt,
+            LockHorizontal ? 0f : Velocity.Z);
 
         // Kinetic friction with the floor so crates slide smoothly then settle
-        float drag = MathF.Exp(-BoxKineticFriction * dt);
-        Velocity = new Vector3(Velocity.X * drag, Velocity.Y, Velocity.Z * drag);
+        if (!LockHorizontal)
+        {
+            float drag = MathF.Exp(-BoxKineticFriction * dt);
+            Velocity = new Vector3(Velocity.X * drag, Velocity.Y, Velocity.Z * drag);
+        }
 
         // Integrate position
         Position += Velocity * dt;
@@ -148,12 +172,19 @@ public class MovableBox
         {
             if (collider.CollideBox(Position, HalfExtents, AxisX, AxisY, AxisZ, out Vector3 correction, out Vector3 normal, out bool grounded))
             {
+                if (LockHorizontal)
+                {
+                    correction.X = 0f;
+                    correction.Z = 0f;
+                }
                 Position += correction;
                 IsGrounded = grounded;
                 float normalVel = Vector3.Dot(Velocity, normal);
                 if (normalVel < 0f)
                 {
-                    Velocity -= normal * normalVel;
+                    Vector3 vCorr = normal * normalVel;
+                    if (LockHorizontal) { vCorr.X = 0f; vCorr.Z = 0f; }
+                    Velocity -= vCorr;
                 }
             }
             else
@@ -195,10 +226,16 @@ public class MovableBox
                     var b = boxes[i];
                     if (collider.CollideBox(b.Position, b.HalfExtents, b.AxisX, b.AxisY, b.AxisZ, out Vector3 corr, out Vector3 n, out bool g))
                     {
+                        if (b.LockHorizontal) { corr.X = 0f; corr.Z = 0f; }
                         b.Position += corr;
                         if (g) b.IsGrounded = true;
                         float nv = Vector3.Dot(b.Velocity, n);
-                        if (nv < 0f) b.Velocity -= n * nv;
+                        if (nv < 0f)
+                        {
+                            Vector3 vc = n * nv;
+                            if (b.LockHorizontal) { vc.X = 0f; vc.Z = 0f; }
+                            b.Velocity -= vc;
+                        }
                     }
                 }
             }
@@ -257,14 +294,19 @@ public class MovableBox
 
         if (minOverlap <= 1e-5f) return;
 
-        float invMassSum = 1f / a.Mass + 1f / b.Mass;
+        bool horizontal = MathF.Abs(n.Y) <= 0.5f;
+        float invA = (horizontal && a.LockHorizontal) ? 0f : 1f / a.Mass;
+        float invB = (horizontal && b.LockHorizontal) ? 0f : 1f / b.Mass;
+        float invMassSum = invA + invB;
+        if (invMassSum <= 1e-8f) return;
+
         float vn = Vector3.Dot(a.Velocity - b.Velocity, n); // < 0 means approaching
         if (vn < 0f)
         {
             float restitution = (-vn > BallPlayer.BallBoxBounceSpeed) ? BoxRestitution : 0f;
             float jn = -(1f + restitution) * vn / invMassSum;
-            Vector3 impA = n * (jn / a.Mass);
-            Vector3 impB = -n * (jn / b.Mass);
+            Vector3 impA = n * (jn * invA);
+            Vector3 impB = -n * (jn * invB);
             if (a.IsGrounded && impA.Y < 0f) impA.Y = 0f;
             if (b.IsGrounded && impB.Y < 0f) impB.Y = 0f;
             a.Velocity += impA;
@@ -272,7 +314,7 @@ public class MovableBox
         }
 
         // Positional separation: handle stacked crates cleanly
-        if (MathF.Abs(n.Y) > 0.5f)
+        if (!horizontal)
         {
             if (n.Y > 0f && b.IsGrounded)
             {
@@ -292,8 +334,8 @@ public class MovableBox
         }
         else
         {
-            float aShare = (1f / a.Mass) / invMassSum;
-            float bShare = (1f / b.Mass) / invMassSum;
+            float aShare = invA / invMassSum;
+            float bShare = invB / invMassSum;
             a.Position += n * (minOverlap * aShare);
             b.Position -= n * (minOverlap * bShare);
         }

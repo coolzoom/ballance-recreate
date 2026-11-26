@@ -54,6 +54,7 @@ public static class PhysicsSelfTest
         TestStackedBoxes();
         TestPuzzleBallsFallAndCollide();
         TestWindFanLiftsPaperBall();
+        TestModul34SlidingStoneDropsWhenCratePushed();
         if (gameRoot != null) TestRealLevels(gameRoot);
 
         Console.WriteLine($"\n{"═",-47}");
@@ -551,6 +552,46 @@ public static class PhysicsSelfTest
 
         Assert(paper.Position.Y > 12f, $"Paper ball lifted high by wind fan (Y={paper.Position.Y:F2})");
         AssertNear(wood.Position.Y, 2.0f, 0.2f, $"Wood ball stays grounded over fan (Y={wood.Position.Y:F2})");
+    }
+
+    // ── Test: P_Modul_34 pushable crate lets vertical sliding stone drop to floor ──
+    private static void TestModul34SlidingStoneDropsWhenCratePushed()
+    {
+        Console.WriteLine("\n── P_Modul_34 crate push & sliding stone drop ──");
+        var collider = new TriangleMeshCollider(16f);
+        AddFloorQuad(collider, -100, 100, -100, 100);
+
+        // Kiste (2.05 halfY) resting on floor at Y=2.05; Schiebestein (2.5 halfY) resting on top at Y=6.6
+        var kiste = new MovableBox(new Vector3(8f, 2.05f, 0f), halfExtents: new Vector3(2.05f, 2.05f, 2.5f), mass: 1.0f);
+        var stone = new MovableBox(new Vector3(8f, 6.6f, 0f), halfExtents: new Vector3(2.5f, 2.5f, 2.5f), mass: 12.0f, lockHorizontal: true);
+        var boxes = new List<MovableBox> { kiste, stone };
+        var ball = new BallPlayer(new Vector3(-4f, 2f, 0f), BallMaterial.Wood);
+        float dt = 1f / 60f;
+
+        // First confirm stone stays supported while kiste is underneath
+        for (int i = 0; i < 30; i++)
+            MovableBox.StepAll(boxes, dt, collider);
+        Assert(stone.Position.Y > 6.3f, $"Stone stays supported on crate (Y={stone.Position.Y:F2})");
+
+        // Now drive the wood ball rightward to push kiste out from under stone
+        for (int i = 0; i < 180; i++)
+        {
+            ball.Update(dt, new Vector2(1f, 0f), Vector3.UnitZ, Vector3.UnitX, collider, boxes);
+            MovableBox.StepAll(boxes, dt, collider);
+            ball.ResolvePostBoxStep(boxes, collider, dt);
+        }
+
+        // Let the ball roll clear out from underneath the falling stone block
+        for (int i = 0; i < 120; i++)
+        {
+            ball.Update(dt, new Vector2(-1f, 0f), Vector3.UnitZ, Vector3.UnitX, collider, boxes);
+            MovableBox.StepAll(boxes, dt, collider);
+            ball.ResolvePostBoxStep(boxes, collider, dt);
+        }
+
+        Assert(kiste.Position.X > 14f, $"Kiste was pushed out (X={kiste.Position.X:F2})");
+        AssertNear(stone.Position.X, 8f, 0.05f, "Sliding stone stayed locked horizontally");
+        AssertNear(stone.Position.Y, 2.5f, 0.15f, $"Sliding stone dropped cleanly onto floor (Y={stone.Position.Y:F2})");
     }
 
     // ── Integration: real level data ────────────────────────────────

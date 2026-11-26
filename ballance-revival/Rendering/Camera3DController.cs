@@ -47,12 +47,15 @@ public class Camera3DController
         UpdateCameraPosition();
     }
 
-    public void LookAlong(Vector3 direction)
+    public void LookAlong(Vector3 direction, bool snapTo90 = true)
     {
         Vector3 flat = new(direction.X, 0f, direction.Z);
         if (flat.LengthSquared() < 1e-4f) return;
         flat = Vector3.Normalize(flat);
-        _currentYaw = _targetYaw = MathF.Atan2(flat.X, flat.Z) * (180f / MathF.PI);
+        float yaw = MathF.Atan2(flat.X, flat.Z) * (180f / MathF.PI);
+        if (snapTo90)
+            yaw = MathF.Round(yaw / 90f) * 90f;
+        _currentYaw = _targetYaw = yaw;
         UpdateCameraPosition();
     }
 

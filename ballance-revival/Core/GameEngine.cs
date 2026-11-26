@@ -25,6 +25,9 @@ public class GameEngine : IDisposable
     private bool _playing;
     private bool _quit;
     private bool _disposed;
+    private Vector2 _mousePressPos;
+    private float _mouseDragDist;
+    private bool _leftButtonTracking;
 
     public string? ScreenshotPath { get; init; }
     public int StartLevel { get; init; } = 1;
@@ -162,11 +165,43 @@ public class GameEngine : IDisposable
             if (Raylib.IsKeyDown(KeyboardKey.Right) || Raylib.IsKeyDown(KeyboardKey.D)) moveInput.X += 1f;
         }
 
-        // Mouse look support (holding Right Mouse Button)
+        // Mouse / trackpad camera rotation:
+        // - Hold Left or Right button and drag: smooth yaw rotation
+        // - Quick Left click / trackpad tap (drag < 8px): snap 90° left (left half) or right (right half)
+        // - Two-finger horizontal trackpad scroll: smooth yaw rotation
         float mouseDeltaX = 0f;
+        if (Raylib.IsMouseButtonPressed(MouseButton.Left))
+        {
+            _mousePressPos = Raylib.GetMousePosition();
+            _mouseDragDist = 0f;
+            _leftButtonTracking = true;
+        }
+        if (Raylib.IsMouseButtonDown(MouseButton.Left) && _leftButtonTracking)
+        {
+            Vector2 delta = Raylib.GetMouseDelta();
+            _mouseDragDist += delta.Length();
+            if (_mouseDragDist > 6f)
+                mouseDeltaX += delta.X;
+        }
+        if (Raylib.IsMouseButtonReleased(MouseButton.Left) && _leftButtonTracking)
+        {
+            _leftButtonTracking = false;
+            if (_mouseDragDist <= 8f)
+            {
+                if (_mousePressPos.X < Raylib.GetScreenWidth() * 0.5f)
+                    _camera.RotateLeft90();
+                else
+                    _camera.RotateRight90();
+            }
+        }
         if (Raylib.IsMouseButtonDown(MouseButton.Right))
         {
-            mouseDeltaX = Raylib.GetMouseDelta().X;
+            mouseDeltaX += Raylib.GetMouseDelta().X;
+        }
+        float wheelX = Raylib.GetMouseWheelMoveV().X;
+        if (MathF.Abs(wheelX) > 0.01f)
+        {
+            mouseDeltaX -= wheelX * 28f;
         }
 
         bool isSpace = Raylib.IsKeyDown(KeyboardKey.Space);
@@ -331,9 +366,24 @@ public class GameEngine : IDisposable
     {
         if (_levelManager == null) return;
         _camera = new Camera3DController(_levelManager.Player.Position);
+
+        // Align cleanly along the start platform's forward axis (+Z row of PS_Levelstart),
+        // snapped to exact 90° cardinal orientation matching the original Ballance camera.
+        var start = _levelManager.CurrentLevel?.StartPoint;
+        if (start != null)
+        {
+            var m = start.WorldMatrix;
+            Vector3 startFwd = new(m.M31, 0f, m.M33);
+            if (startFwd.LengthSquared() > 1e-4f)
+            {
+                _camera.LookAlong(startFwd, snapTo90: true);
+                return;
+            }
+        }
+
         var resets = _levelManager.CurrentLevel?.ResetPointEntities;
         if (resets != null && resets.Count >= 2)
-            _camera.LookAlong(resets[1].Position - resets[0].Position);
+            _camera.LookAlong(resets[1].Position - resets[0].Position, snapTo90: true);
     }
 
     public void Dispose()
