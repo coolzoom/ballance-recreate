@@ -192,7 +192,7 @@ public sealed class MainMenu : IDisposable
         if (_columns > 1 && Raylib.IsKeyPressed(KeyboardKey.Left)) _index = (_index - 1 + n) % n;
         if (_columns > 1 && Raylib.IsKeyPressed(KeyboardKey.Right)) _index = (_index + 1) % n;
 
-        if (Page == MenuPage.Options && _index < 6)
+        if (Page == MenuPage.Options && _index < 9)
         {
             if (Raylib.IsKeyPressed(KeyboardKey.Left) || Raylib.IsKeyPressed(KeyboardKey.A))
             {
@@ -325,7 +325,7 @@ public sealed class MainMenu : IDisposable
                 return MenuCommand.None;
 
             case MenuPage.Options:
-                if (_index < 7)
+                if (_index < 10)
                 {
                     AdjustOption(_index, +1);
                     return MenuCommand.None;
@@ -468,9 +468,12 @@ public sealed class MainMenu : IDisposable
             case 1: _settings.CycleBloom(dir); break;
             case 2: _settings.CycleSnow(dir); break;
             case 3: _settings.CycleGodRays(dir); break;
-            case 4: _settings.ToggleSsr(); break;
-            case 5: _settings.CycleDebugMode(dir); break;
-            case 6: _settings.ResetDefaults(); break;
+            case 4: _settings.CycleVolumetricFog(dir); break;
+            case 5: _settings.CycleVolumetricClouds(dir); break;
+            case 6: _settings.ToggleSsr(); break;
+            case 7: _settings.ToggleShadows(); break;
+            case 8: _settings.CycleDebugMode(dir); break;
+            case 9: _settings.ResetDefaults(); break;
             default: return;
         }
         _settings.Save();
@@ -485,16 +488,19 @@ public sealed class MainMenu : IDisposable
             $"HDR Bloom: {_settings.BloomLabel}",
             $"Snow: {_settings.SnowLabel}",
             $"God Rays: {_settings.GodRaysLabel}",
+            $"Vol. Fog: {_settings.VolumetricFogLabel}",
+            $"Vol. Clouds: {_settings.VolumetricCloudsLabel}",
             $"Metallic SSR: {_settings.SsrLabel}",
+            $"Shadows: {_settings.ShadowsLabel}",
             $"Debug View: {_settings.DebugModeLabel}",
             "Reset Defaults"
         ];
 
-        float bh = Math.Clamp(h * 0.060f, 34f, 48f);
-        float bw = MathF.Min(w * 0.56f, bh * 7.6f);
-        float gap = bh * 0.22f;
+        float bh = Math.Clamp(h * 0.048f, 28f, 40f);
+        float bw = MathF.Min(w * 0.56f, bh * 8.6f);
+        float gap = bh * 0.16f;
         float x = (w - bw) * 0.5f;
-        float y = CoversGame ? h * 0.16f : h * 0.19f;
+        float y = CoversGame ? h * 0.13f : h * 0.16f;
 
         foreach (string label in labels)
         {
@@ -502,9 +508,9 @@ public sealed class MainMenu : IDisposable
             y += bh + gap;
         }
 
-        float backH = Math.Clamp(h * 0.085f, 44f, 66f);
+        float backH = Math.Clamp(h * 0.072f, 38f, 56f);
         float backW = backH * (SrcBackButton.Width / SrcBackButton.Height);
-        float backY = MathF.Min(h - backH - 36f, y + 10f);
+        float backY = MathF.Min(h - backH - 32f, y + 6f);
         _items.Add(("Zur\u00fcck", new Rectangle((w - backW) * 0.5f, backY, backW, backH), ButtonStyle.Back));
     }
 
@@ -575,7 +581,7 @@ public sealed class MainMenu : IDisposable
         float titleY = CoversGame ? h * 0.08f : h * 0.125f;
         _font.DrawCentered("Graphics Options", w * 0.5f, titleY, 26f, Ink);
 
-        string hint = "Click / Left-Right to change   |   F1-F6 Hotkeys   |   Esc Back";
+        string hint = "Click / Left-Right to change   |   F1-F8 Hotkeys   |   Esc Back";
         _font.DrawCentered(hint, w * 0.5f, h - 24f, 15f, new Color(200, 210, 224, 210));
     }
 

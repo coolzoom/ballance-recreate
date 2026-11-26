@@ -715,12 +715,26 @@ public class LevelManager
         _hud.ShowBanner("RESPAWNED", Color.White, 1.0f);
     }
 
+    public void DrawShadowCasters(float time)
+    {
+        if (CurrentRenderer == null || CurrentLevel == null) return;
+        DrawOpaqueGeometry(time);
+    }
+
     public void DrawLevel(Camera3D camera, float time)
     {
-        Vector3 cameraPos = camera.Position;
         if (CurrentRenderer == null || CurrentLevel == null) return;
 
         ApplyLighting(time);
+        DrawOpaqueGeometry(time);
+        DrawPickupCores(camera);
+        RenderQueue.FlushTransparent();
+        DrawQueuedFlames(camera, time);
+    }
+
+    private void DrawOpaqueGeometry(float time)
+    {
+        if (CurrentRenderer == null || CurrentLevel == null) return;
 
         foreach (var entity in CurrentLevel.AllRenderables)
         {
@@ -857,9 +871,6 @@ public class LevelManager
 
         DrawPlayerBall();
         DrawTransformAnimation(time);
-        DrawPickupCores(camera);
-        RenderQueue.FlushTransparent();
-        DrawQueuedFlames(camera, time);
     }
 
     /// <summary>

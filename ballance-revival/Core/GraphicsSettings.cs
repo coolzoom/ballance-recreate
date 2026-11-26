@@ -12,7 +12,9 @@ public sealed class GraphicsSettings
 {
     private static readonly float[] BloomSteps = [0f, 0.45f, 0.80f, 1.15f];
     private static readonly float[] SnowSteps = [0f, 0.50f, 0.90f];
-    private static readonly float[] GodRaySteps = [0f, 0.45f, 0.95f];
+    private static readonly float[] GodRaySteps = [0f, 0.50f, 1.00f];
+    private static readonly float[] FogSteps = [0f, 0.55f, 1.00f];
+    private static readonly float[] CloudSteps = [0f, 0.48f, 0.80f];
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -23,8 +25,11 @@ public sealed class GraphicsSettings
     public float AtmosphereMood { get; set; } = 0f;
     public float BloomIntensity { get; set; } = 0.45f;
     public float SnowIntensity { get; set; } = 0f;
-    public float GodRaysIntensity { get; set; } = 0.45f;
+    public float GodRaysIntensity { get; set; } = 0.50f;
+    public float VolumetricFogIntensity { get; set; } = 0.55f;
+    public float VolumetricCloudsCoverage { get; set; } = 0.48f;
     public bool EnableSsr { get; set; } = true;
+    public bool EnableShadows { get; set; } = true;
     public PostProcessDebugMode DebugMode { get; set; } = PostProcessDebugMode.None;
 
     public static string SettingsFilePath
@@ -85,6 +90,8 @@ public sealed class GraphicsSettings
         BloomIntensity = Math.Clamp(BloomIntensity, 0f, 1.5f);
         SnowIntensity = Math.Clamp(SnowIntensity, 0f, 1f);
         GodRaysIntensity = Math.Clamp(GodRaysIntensity, 0f, 1.5f);
+        VolumetricFogIntensity = Math.Clamp(VolumetricFogIntensity, 0f, 1.5f);
+        VolumetricCloudsCoverage = Math.Clamp(VolumetricCloudsCoverage, 0f, 1f);
         if (!Enum.IsDefined(DebugMode))
             DebugMode = PostProcessDebugMode.None;
     }
@@ -94,8 +101,11 @@ public sealed class GraphicsSettings
         AtmosphereMood = 0f;
         BloomIntensity = 0.45f;
         SnowIntensity = 0f;
-        GodRaysIntensity = 0.45f;
+        GodRaysIntensity = 0.50f;
+        VolumetricFogIntensity = 0.55f;
+        VolumetricCloudsCoverage = 0.48f;
         EnableSsr = true;
+        EnableShadows = true;
         DebugMode = PostProcessDebugMode.None;
     }
 
@@ -103,11 +113,14 @@ public sealed class GraphicsSettings
     public void CycleBloom(int dir = 1) => BloomIntensity = StepValue(BloomIntensity, BloomSteps, dir);
     public void CycleSnow(int dir = 1) => SnowIntensity = StepValue(SnowIntensity, SnowSteps, dir);
     public void CycleGodRays(int dir = 1) => GodRaysIntensity = StepValue(GodRaysIntensity, GodRaySteps, dir);
+    public void CycleVolumetricFog(int dir = 1) => VolumetricFogIntensity = StepValue(VolumetricFogIntensity, FogSteps, dir);
+    public void CycleVolumetricClouds(int dir = 1) => VolumetricCloudsCoverage = StepValue(VolumetricCloudsCoverage, CloudSteps, dir);
     public void ToggleSsr() => EnableSsr = !EnableSsr;
+    public void ToggleShadows() => EnableShadows = !EnableShadows;
 
     public void CycleDebugMode(int dir = 1)
     {
-        int count = 5;
+        int count = 6;
         int next = ((int)DebugMode + dir + count) % count;
         DebugMode = (PostProcessDebugMode)next;
     }
@@ -116,7 +129,10 @@ public sealed class GraphicsSettings
     public string BloomLabel => BloomIntensity < 0.05f ? "Off" : $"{BloomIntensity * 100f:0}%";
     public string SnowLabel => SnowIntensity < 0.05f ? "Off" : $"{SnowIntensity * 100f:0}%";
     public string GodRaysLabel => GodRaysIntensity < 0.05f ? "Off" : $"{GodRaysIntensity * 100f:0}%";
+    public string VolumetricFogLabel => VolumetricFogIntensity < 0.05f ? "Off" : $"{VolumetricFogIntensity * 100f:0}%";
+    public string VolumetricCloudsLabel => VolumetricCloudsCoverage < 0.05f ? "Off" : $"{VolumetricCloudsCoverage * 100f:0}%";
     public string SsrLabel => EnableSsr ? "On" : "Off";
+    public string ShadowsLabel => EnableShadows ? "On" : "Off";
 
     public string DebugModeLabel => DebugMode switch
     {
@@ -125,6 +141,7 @@ public sealed class GraphicsSettings
         PostProcessDebugMode.WorldNormal => "Normal",
         PostProcessDebugMode.WorldPosition => "WorldPos",
         PostProcessDebugMode.BloomOnly => "Bloom",
+        PostProcessDebugMode.VolumetricOnly => "Volumetric",
         _ => "Off"
     };
 

@@ -37,7 +37,7 @@ public static class Program
         int startLevel = args.Length > 2 && int.TryParse(args[2], out int lv) ? Math.Clamp(lv, 0, 12) : 1;
         Gameplay.BallMaterial? startMat = args.Length > 3 && Enum.TryParse<Gameplay.BallMaterial>(args[3], true, out var mat) ? mat : null;
         Rendering.PostProcessDebugMode? debugMode = null;
-        float? mood = null, snow = null, godRays = null;
+        float? mood = null, snow = null, godRays = null, fog = null, clouds = null;
         bool? ssr = null;
         bool startInOptions = false;
         for (int i = 0; i < args.Length; i++)
@@ -47,13 +47,17 @@ public static class Program
             else if (i + 1 < args.Length)
             {
                 if (args[i] == "--debug" && int.TryParse(args[i + 1], out int dm))
-                    debugMode = (Rendering.PostProcessDebugMode)Math.Clamp(dm, 0, 4);
+                    debugMode = (Rendering.PostProcessDebugMode)Math.Clamp(dm, 0, 5);
                 else if (args[i] == "--mood" && float.TryParse(args[i + 1], out float m))
                     mood = Math.Clamp(m, 0f, 1f);
                 else if (args[i] == "--snow" && float.TryParse(args[i + 1], out float sn))
                     snow = Math.Clamp(sn, 0f, 1f);
                 else if (args[i] == "--godrays" && float.TryParse(args[i + 1], out float gr))
                     godRays = Math.Clamp(gr, 0f, 1.5f);
+                else if (args[i] == "--fog" && float.TryParse(args[i + 1], out float fg))
+                    fog = Math.Clamp(fg, 0f, 1.5f);
+                else if (args[i] == "--clouds" && float.TryParse(args[i + 1], out float cl))
+                    clouds = Math.Clamp(cl, 0f, 1f);
                 else if (args[i] == "--ssr" && int.TryParse(args[i + 1], out int s))
                     ssr = s != 0;
             }
@@ -67,6 +71,8 @@ public static class Program
             InitialMood = mood,
             InitialSnow = snow,
             InitialGodRays = godRays,
+            InitialFog = fog,
+            InitialClouds = clouds,
             InitialSsr = ssr,
             StartInOptions = startInOptions
         };

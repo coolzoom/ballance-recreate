@@ -5,8 +5,51 @@ namespace BallanceRevival.Rendering;
 
 public class SkyboxRenderer : IDisposable
 {
+    private const string SunVertexSource = """
+        #version 330
+        in vec3 vertexPosition;
+        in vec2 vertexTexCoord;
+        uniform mat4 mvp;
+        out vec2 fragTexCoord;
+        void main()
+        {
+            fragTexCoord = vertexTexCoord;
+            gl_Position = mvp * vec4(vertexPosition, 1.0);
+        }
+        """;
+
+    private const string SunFragmentSource = """
+        #version 330
+        in vec2 fragTexCoord;
+        uniform vec3 sunColor;
+        uniform float moodyNight;
+        out vec4 finalColor;
+        void main()
+        {
+            vec2 p = fragTexCoord * 2.0 - 1.0;
+            float r = length(p);
+            if (r > 1.0) discard;
+
+            // Crisp HDR solar/lunar disk + soft multi-layered Mie atmospheric corona
+            float diskRadius = mix(0.135, 0.115, moodyNight);
+            float disk = smoothstep(diskRadius + 0.024, diskRadius - 0.012, r);
+            float innerHalo = exp(-r * 5.8) * 1.15;
+            float outerHalo = pow(max(1.0 - r, 0.0), 3.0) * 0.48;
+
+            vec3 coreCol = mix(vec3(5.2, 4.3, 2.7), vec3(2.2, 2.45, 2.9), moodyNight);
+            vec3 haloCol = mix(sunColor * vec3(1.55, 1.12, 0.62), vec3(0.45, 0.60, 0.98), moodyNight);
+
+            vec3 col = coreCol * disk + haloCol * (innerHalo + outerHalo);
+            float alpha = clamp(disk + innerHalo + outerHalo, 0.0, 1.0);
+            finalColor = vec4(col, alpha);
+        }
+        """;
+
     private readonly TextureManager _textureManager;
     private Texture2D _front, _back, _left, _right, _down;
+    private readonly Shader _sunShader;
+    private readonly int _sunColorLoc;
+    private readonly int _sunMoodLoc;
     public Vector3 FogColor { get; private set; } = new(0.86f, 0.62f, 0.68f);
     public Vector3 SkyTint { get; private set; } = Vector3.One;
     public Vector3 GroundTint { get; private set; } = Vector3.One;
@@ -15,6 +58,12 @@ public class SkyboxRenderer : IDisposable
     public SkyboxRenderer(TextureManager textureManager)
     {
         _textureManager = textureManager;
+        _sunShader = Raylib.LoadShaderFromMemory(SunVertexSource, SunFragmentSource);
+        if (_sunShader.Id != 0)
+        {
+            _sunColorLoc = Raylib.GetShaderLocation(_sunShader, "sunColor");
+            _sunMoodLoc = Raylib.GetShaderLocation(_sunShader, "moodyNight");
+        }
         SetTheme("Sky_A");
     }
 
@@ -72,9 +121,46 @@ public class SkyboxRenderer : IDisposable
         // No top texture ships with the game: stretch the front image's top row over the lid
         DrawQuad(_front, c, new(-s, s, -s), new(s, s, -s), new(s, s, s), new(-s, s, s), r, g, b, topRowOnly: true);
 
+        // Visible HDR Sun (day) / Moon (night) disk + atmospheric Mie corona
+        DrawSunDisk(c, moodyNight);
+
         Rlgl.DrawRenderBatchActive();
         Rlgl.EnableBackfaceCulling();
         Rlgl.EnableDepthMask();
+    }
+
+    private void DrawSunDisk(Vector3 camPos, float moodyNight)
+    {
+        if (_sunShader.Id == 0) return;
+
+        Vector3 sunDir = LitShader.VisualSunDir;
+        Vector3 sunCenter = camPos + sunDir * 355f;
+        Vector3 right = Vector3.Normalize(Vector3.Cross(Vector3.UnitY, sunDir));
+        Vector3 up = Vector3.Cross(sunDir, right);
+        float halfSize = 115f;
+
+        Vector3 bl = sunCenter - right * halfSize - up * halfSize;
+        Vector3 br = sunCenter + right * halfSize - up * halfSize;
+        Vector3 tr = sunCenter + right * halfSize + up * halfSize;
+        Vector3 tl = sunCenter - right * halfSize + up * halfSize;
+
+        Rlgl.DrawRenderBatchActive();
+        Raylib.BeginBlendMode(BlendMode.Additive);
+        Raylib.BeginShaderMode(_sunShader);
+        Raylib.SetShaderValue(_sunShader, _sunColorLoc, SunTint, ShaderUniformDataType.Vec3);
+        Raylib.SetShaderValue(_sunShader, _sunMoodLoc, moodyNight, ShaderUniformDataType.Float);
+
+        Rlgl.Begin(DrawMode.Quads);
+        Rlgl.Color4ub(255, 255, 255, 255);
+        Rlgl.TexCoord2f(0f, 0f); Rlgl.Vertex3f(bl.X, bl.Y, bl.Z);
+        Rlgl.TexCoord2f(1f, 0f); Rlgl.Vertex3f(br.X, br.Y, br.Z);
+        Rlgl.TexCoord2f(1f, 1f); Rlgl.Vertex3f(tr.X, tr.Y, tr.Z);
+        Rlgl.TexCoord2f(0f, 1f); Rlgl.Vertex3f(tl.X, tl.Y, tl.Z);
+        Rlgl.End();
+        Rlgl.DrawRenderBatchActive();
+
+        Raylib.EndShaderMode();
+        Raylib.EndBlendMode();
     }
 
     private static void DrawQuad(Texture2D tex, Vector3 c, Vector3 bl, Vector3 br, Vector3 tr, Vector3 tl, byte r, byte g, byte b, bool topRowOnly = false)
@@ -95,5 +181,6 @@ public class SkyboxRenderer : IDisposable
 
     public void Dispose()
     {
+        if (_sunShader.Id != 0) Raylib.UnloadShader(_sunShader);
     }
 }

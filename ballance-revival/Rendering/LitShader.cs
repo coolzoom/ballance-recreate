@@ -51,6 +51,10 @@ public static class LitShader
         uniform vec4 surface;        // x: specStrength, y: specPower, z: receivesBallShadow, w: >0.5 sphere env-map / <-0.5 self-lit
         uniform float atmosphereMood;// 0.0 = Classic Vivid, 1.0 = Moody / Night High-Contrast
         uniform float snowIntensity; // 0.0 ~ 1.0 Dynamic Y-Up Snow Accumulation (Stage 2)
+        uniform sampler2D shadowMap; // 2048x2048 directional shadow depth map
+        uniform mat4 matLightVP;     // Light-space ViewProjection (column-vector)
+        uniform float shadowEnabled; // 1.0 = enabled, 0.0 = disabled
+        uniform vec2 shadowTexelSize;// 1.0 / shadowMapResolution
         uniform int lightCount;
         uniform vec4 lightPos[MAX_LIGHTS];   // xyz, radius
         uniform vec3 lightColor[MAX_LIGHTS];
@@ -91,11 +95,33 @@ public static class LitShader
             return s * (1.0 - smoothstep(2.0, 15.0, h)) * 0.8;
         }
 
-        vec3 softClip(vec3 c)
+        // Real-time 3x3 PCF directional shadow map lookup with slope-scaled bias & edge fade
+        float calcDirShadow(vec3 worldPos, vec3 n)
         {
-            const float k = 0.82;
-            vec3 over = max(c - k, 0.0);
-            return min(c, vec3(k)) + (1.0 - k) * (1.0 - exp(-over / (1.0 - k)));
+            if (shadowEnabled < 0.5) return 0.0;
+            vec4 ls = matLightVP * vec4(worldPos, 1.0);
+            vec3 proj = ls.xyz / max(abs(ls.w), 1e-5) * 0.5 + 0.5;
+            if (proj.z <= 0.0 || proj.z >= 1.0 || proj.x <= 0.0 || proj.x >= 1.0 || proj.y <= 0.0 || proj.y >= 1.0)
+                return 0.0;
+
+            float ndotl = max(dot(n, sunDir), 0.0);
+            float bias = max(0.0022 * (1.0 - ndotl), 0.0006);
+
+            float occ = 0.0;
+            for (int x = -1; x <= 1; x++)
+            {
+                for (int y = -1; y <= 1; y++)
+                {
+                    float mapD = texture(shadowMap, proj.xy + vec2(x, y) * shadowTexelSize * 1.35).r;
+                    occ += (proj.z - bias > mapD) ? 1.0 : 0.0;
+                }
+            }
+            occ /= 9.0;
+
+            // Smooth fade near shadow frustum borders so there is never a hard cutoff edge
+            vec2 edgeDist = min(proj.xy, 1.0 - proj.xy);
+            float borderFade = smoothstep(0.0, 0.12, min(edgeDist.x, edgeDist.y));
+            return occ * borderFade;
         }
 
         void main()
@@ -130,7 +156,9 @@ public static class LitShader
             }
             if (texel.a < 0.04) discard;
 
-            float shadow = ballShadow();
+            float contactShadow = ballShadow();
+            float dirShadow = calcDirShadow(fragWorld, n);
+            float shadow = max(dirShadow * 0.86, contactShadow * 0.65);
             float ndl = dot(n, sunDir);
             bool isBall = surface.z < 0.5 && surface.x > 0.0 && !isEnvMap && !isEmissive;
 
@@ -164,10 +192,10 @@ public static class LitShader
             }
             else if (isBall)
             {
-                // Hero ball lighting: neutral-warm directional shading with deep shadowed underside
+                // Hero ball lighting: neutral-warm directional shading with deep shadowed underside + dynamic shadows
                 vec3 ballAmbient = mix(vec3(0.16, 0.16, 0.18), mix(vec3(0.54), skyTint * 0.52, 0.35), n.y * 0.5 + 0.5) * ambScale * moodyTint;
                 float ballWrap = clamp((ndl + 0.12) / 1.12, 0.0, 1.0);
-                light = ballAmbient + mix(vec3(1.0, 0.98, 0.94), sunTint, 0.25) * (0.76 * sunScale * ballWrap);
+                light = ballAmbient * (1.0 - 0.30 * dirShadow) + mix(vec3(1.0, 0.98, 0.94), sunTint, 0.25) * (0.76 * sunScale * ballWrap) * (1.0 - dirShadow * 0.85);
             }
             else if (isEnvMap)
             {
@@ -178,9 +206,9 @@ public static class LitShader
             }
             else
             {
-                vec3 ambient = mix(groundTint * 0.72, skyTint, n.y * 0.5 + 0.5) * 0.62 * ambScale * moodyTint;
-                float wrapped = clamp((ndl + 0.3) / 1.3, 0.0, 1.0);
-                light = ambient * (1.0 - 0.45 * shadow) + sunTint * (0.50 * sunScale * wrapped) * (1.0 - shadow);
+                vec3 ambient = mix(groundTint * 0.70, skyTint, n.y * 0.5 + 0.5) * 0.58 * ambScale * moodyTint;
+                float wrapped = clamp((ndl + 0.28) / 1.28, 0.0, 1.0);
+                light = ambient * (1.0 - 0.52 * shadow) + sunTint * (0.58 * sunScale * wrapped) * (1.0 - shadow);
             }
 
             vec3 spec = vec3(0.0);
@@ -234,7 +262,11 @@ public static class LitShader
 
     private static int _viewPosLoc, _fogColorLoc, _fogDensityLoc, _fogHeightLoc;
     private static int _skyTintLoc, _groundTintLoc, _sunTintLoc, _sunDirLoc;
-    public static readonly Vector3 SunDir = Vector3.Normalize(new Vector3(-0.35f, 0.9f, -0.25f));
+    private static int _shadowMapLoc, _lightVpLoc, _shadowEnabledLoc, _shadowTexelLoc;
+    // Dramatic ~34° sun elevation positioned in upper-right sky for crisp diagonal shadows across rails, pillars, crates, and balls
+    public static readonly Vector3 SunDir = Vector3.Normalize(new Vector3(-0.74f, 0.56f, -0.37f));
+    // Same azimuth framed cleanly in the upper-right sky above the distant cloud sea
+    public static readonly Vector3 VisualSunDir = Vector3.Normalize(new Vector3(-0.89f, -0.045f, -0.45f));
     private static int _ballPosLoc, _surfaceLoc, _moodLoc, _snowLoc, _lightCountLoc, _lightPosLoc, _lightColorLoc;
     private static Vector4 _surface = new(-1f);
 
@@ -256,11 +288,18 @@ public static class LitShader
         _surfaceLoc = Raylib.GetShaderLocation(Shader, "surface");
         _moodLoc = Raylib.GetShaderLocation(Shader, "atmosphereMood");
         _snowLoc = Raylib.GetShaderLocation(Shader, "snowIntensity");
+        _shadowMapLoc = Raylib.GetShaderLocation(Shader, "shadowMap");
+        _lightVpLoc = Raylib.GetShaderLocation(Shader, "matLightVP");
+        _shadowEnabledLoc = Raylib.GetShaderLocation(Shader, "shadowEnabled");
+        _shadowTexelLoc = Raylib.GetShaderLocation(Shader, "shadowTexelSize");
         _lightCountLoc = Raylib.GetShaderLocation(Shader, "lightCount");
         _lightPosLoc = Raylib.GetShaderLocation(Shader, "lightPos");
         _lightColorLoc = Raylib.GetShaderLocation(Shader, "lightColor");
 
         Raylib.SetShaderValue(Shader, _sunDirLoc, SunDir, ShaderUniformDataType.Vec3);
+        Raylib.SetShaderValue(Shader, _shadowMapLoc, 3, ShaderUniformDataType.Int);
+        Raylib.SetShaderValue(Shader, _shadowEnabledLoc, 0f, ShaderUniformDataType.Float);
+        Raylib.SetShaderValue(Shader, _shadowTexelLoc, new Vector2(1f / ShadowMap.Resolution, 1f / ShadowMap.Resolution), ShaderUniformDataType.Vec2);
         SetEnvironment(Vector3.One, Vector3.One, Vector3.One);
         SetFogHeight(-1e6f, 1f);
         SetBall(Vector3.Zero, 0f);
@@ -280,6 +319,19 @@ public static class LitShader
     {
         if (Shader.Id == 0) return;
         Raylib.SetShaderValue(Shader, _snowLoc, Math.Clamp(intensity, 0f, 1f), ShaderUniformDataType.Float);
+    }
+
+    public static void SetShadowMap(Texture2D depthTex, Matrix4x4 lightViewProj, bool enabled)
+    {
+        if (Shader.Id == 0) return;
+        bool active = enabled && depthTex.Id != 0;
+        Raylib.SetShaderValue(Shader, _shadowEnabledLoc, active ? 1f : 0f, ShaderUniformDataType.Float);
+        if (!active) return;
+
+        Raylib.SetShaderValueMatrix(Shader, _lightVpLoc, Matrix4x4.Transpose(lightViewProj));
+        Rlgl.ActiveTextureSlot(3);
+        Rlgl.EnableTexture(depthTex.Id);
+        Rlgl.ActiveTextureSlot(0);
     }
 
     public static void SetFog(Vector3 viewPos, Vector3 fogColor, float density)

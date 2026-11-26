@@ -15,6 +15,9 @@ public static class RenderQueue
     private static readonly Vector4[] _planes = new Vector4[6];
     private static bool _cullEnabled;
     private static Vector3 _viewPos;
+    private static Vector3 _shadowCenter;
+    private static float _shadowRadius;
+    public static bool IsShadowPass { get; private set; }
 
     private struct TransparentItem
     {
@@ -72,8 +75,25 @@ public static class RenderQueue
         _cullEnabled = false;
     }
 
+    public static void BeginShadowPass(Vector3 center, float radius)
+    {
+        IsShadowPass = true;
+        _shadowCenter = center;
+        _shadowRadius = radius;
+    }
+
+    public static void EndShadowPass()
+    {
+        IsShadowPass = false;
+    }
+
     public static bool IsVisible(Vector3 center, float radius)
     {
+        if (IsShadowPass)
+        {
+            float maxR = _shadowRadius + radius;
+            return Vector3.DistanceSquared(center, _shadowCenter) <= maxR * maxR;
+        }
         if (!_cullEnabled) return true;
         for (int i = 0; i < 6; i++)
         {

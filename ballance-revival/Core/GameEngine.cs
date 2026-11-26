@@ -20,6 +20,7 @@ public class GameEngine : IDisposable
     private LevelManager? _levelManager;
     private MainMenu? _menu;
     private RenderPipeline? _pipeline;
+    private ShadowMap? _shadowMap;
     private Texture2D _vignette;
 
     private float _totalTime = 0f;
@@ -37,6 +38,8 @@ public class GameEngine : IDisposable
     public float? InitialMood { get; init; }
     public float? InitialSnow { get; init; }
     public float? InitialGodRays { get; init; }
+    public float? InitialFog { get; init; }
+    public float? InitialClouds { get; init; }
     public bool? InitialSsr { get; init; }
     public bool StartInOptions { get; init; }
     private GraphicsSettings _settings = new();
@@ -66,6 +69,8 @@ public class GameEngine : IDisposable
         if (InitialMood.HasValue) _settings.AtmosphereMood = InitialMood.Value;
         if (InitialSnow.HasValue) _settings.SnowIntensity = InitialSnow.Value;
         if (InitialGodRays.HasValue) _settings.GodRaysIntensity = InitialGodRays.Value;
+        if (InitialFog.HasValue) _settings.VolumetricFogIntensity = InitialFog.Value;
+        if (InitialClouds.HasValue) _settings.VolumetricCloudsCoverage = InitialClouds.Value;
         if (InitialSsr.HasValue) _settings.EnableSsr = InitialSsr.Value;
         _settings.Clamp();
 
@@ -74,8 +79,11 @@ public class GameEngine : IDisposable
             DebugMode = _settings.DebugMode,
             BloomIntensity = _settings.BloomIntensity,
             GodRaysIntensity = _settings.GodRaysIntensity,
+            VolumetricFogIntensity = _settings.VolumetricFogIntensity,
+            VolumetricCloudsCoverage = _settings.VolumetricCloudsCoverage,
             EnableSsr = _settings.EnableSsr
         };
+        _shadowMap = new ShadowMap();
         _textureManager = new TextureManager(texturesDir);
         _audioManager = new AudioManager(soundsDir);
         _skybox = new SkyboxRenderer(_textureManager);
@@ -208,12 +216,36 @@ public class GameEngine : IDisposable
             _hud?.ShowBanner($"GOD RAYS: {_settings.GodRaysLabel.ToUpper()}", Color.Gold, 1.5f);
         }
 
-        // Toggle Stage 4B Metallic SSR (F6)
+        // Toggle Stage 4C Metallic SSR (F6)
         if (Raylib.IsKeyPressed(KeyboardKey.F6))
         {
             _settings.ToggleSsr();
             _settings.Save();
             _hud?.ShowBanner($"METALLIC SSR: {_settings.SsrLabel.ToUpper()}", Color.SkyBlue, 1.5f);
+        }
+
+        // Cycle Stage 4A Volumetric Fog (F7)
+        if (Raylib.IsKeyPressed(KeyboardKey.F7))
+        {
+            _settings.CycleVolumetricFog();
+            _settings.Save();
+            _hud?.ShowBanner($"VOLUMETRIC FOG: {_settings.VolumetricFogLabel.ToUpper()}", Color.SkyBlue, 1.5f);
+        }
+
+        // Cycle Stage 4B Volumetric Clouds (F8)
+        if (Raylib.IsKeyPressed(KeyboardKey.F8))
+        {
+            _settings.CycleVolumetricClouds();
+            _settings.Save();
+            _hud?.ShowBanner($"VOLUMETRIC CLOUDS: {_settings.VolumetricCloudsLabel.ToUpper()}", Color.RayWhite, 1.5f);
+        }
+
+        // Toggle Real-Time Directional Shadows (F9)
+        if (Raylib.IsKeyPressed(KeyboardKey.F9))
+        {
+            _settings.ToggleShadows();
+            _settings.Save();
+            _hud?.ShowBanner($"DYNAMIC SHADOWS: {_settings.ShadowsLabel.ToUpper()}", Color.Gold, 1.5f);
         }
     }
 
@@ -349,16 +381,31 @@ public class GameEngine : IDisposable
             return;
         }
 
-        // Sync live graphics settings to pipeline every frame (reflects Options menu & F1-F6 immediately)
+        // Sync live graphics settings to pipeline every frame (reflects Options menu & F1-F8 immediately)
         if (_pipeline != null)
         {
             _pipeline.DebugMode = _settings.DebugMode;
             _pipeline.BloomIntensity = _settings.BloomIntensity;
             _pipeline.GodRaysIntensity = _settings.GodRaysIntensity;
+            _pipeline.VolumetricFogIntensity = _settings.VolumetricFogIntensity;
+            _pipeline.VolumetricCloudsCoverage = _settings.VolumetricCloudsCoverage;
             _pipeline.EnableSsr = _settings.EnableSsr;
         }
         float mood = _settings.AtmosphereMood;
         float snow = _settings.SnowIntensity;
+
+        // 0. Real-Time Directional Shadow Pass (2048x2048 orthographic depth map following the player)
+        bool hasShadows = false;
+        if (_settings.EnableShadows && _shadowMap != null && _shadowMap.BeginShadowPass(_levelManager.Player.Position, LitShader.SunDir))
+        {
+            _levelManager.DrawShadowCasters(_totalTime);
+            _shadowMap.EndShadowPass();
+            hasShadows = true;
+        }
+        LitShader.SetShadowMap(
+            hasShadows ? _shadowMap!.DepthTexture : default,
+            hasShadows ? _shadowMap!.LightViewProjection : Matrix4x4.Identity,
+            hasShadows);
 
         // 3D Scene Rendering -> HDR RGBA16F FBO + sampleable Depth Texture
         int renderWidth = Math.Max(Raylib.GetRenderWidth(), screenWidth);
@@ -390,8 +437,16 @@ public class GameEngine : IDisposable
         if (offscreen)
         {
             _pipeline!.EndScene();
-            // Stage 1-4 Composite: Bloom + God Rays + Metallic SSR + ACES Tone Mapping -> screen
-            _pipeline.ComposeToScreen(screenWidth, screenHeight, _skybox.SunTint, mood);
+            // Stage 1-4 Composite: Bloom + Volumetric Fog & God Rays + Volumetric Clouds + Metallic SSR + ACES -> screen
+            _pipeline.ComposeToScreen(
+                screenWidth,
+                screenHeight,
+                _skybox.SunTint,
+                _skybox.SkyTint,
+                activeFog,
+                mood,
+                _levelManager.FloorMinY,
+                _totalTime);
         }
 
         if (_vignette.Id != 0)
@@ -497,6 +552,7 @@ public class GameEngine : IDisposable
 
         _menu?.Dispose();
         _hud?.Dispose();
+        _shadowMap?.Dispose();
         _pipeline?.Dispose();
         _textureManager?.Dispose();
         _audioManager?.Dispose();

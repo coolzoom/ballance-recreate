@@ -22,6 +22,12 @@ public unsafe class RenderSubmesh : IDisposable
     /// <summary>Draws without touching blend or depth state; the caller owns that.</summary>
     public void DrawRaw(Matrix4x4 transform)
     {
+        if (RenderQueue.IsShadowPass)
+        {
+            if (Alpha || Additive) return;
+            Raylib.DrawMesh(Mesh, ShadowMap.DepthMaterial, Matrix4x4.Transpose(transform));
+            return;
+        }
         LitShader.SetSurface(Surface);
         // Raylib-cs expects translation in M14 (column-vector layout), System.Numerics stores it in M41
         Raylib.DrawMesh(Mesh, Material, Matrix4x4.Transpose(transform));
@@ -67,7 +73,11 @@ public class RenderMesh : IDisposable
 
         foreach (var submesh in Submeshes)
         {
-            if (submesh.Alpha) RenderQueue.EnqueueTransparent(submesh, transform, center);
+            if (RenderQueue.IsShadowPass)
+            {
+                if (!submesh.Alpha && !submesh.Additive) submesh.DrawRaw(transform);
+            }
+            else if (submesh.Alpha) RenderQueue.EnqueueTransparent(submesh, transform, center);
             else submesh.DrawRaw(transform);
         }
     }
