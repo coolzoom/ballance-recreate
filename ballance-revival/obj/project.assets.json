@@ -2,35 +2,6 @@
   "version": 3,
   "targets": {
     "net10.0": {
-      "BepuPhysics/2.4.0": {
-        "type": "package",
-        "dependencies": {
-          "BepuUtilities": "2.4.0"
-        },
-        "compile": {
-          "lib/net6.0/BepuPhysics.dll": {
-            "related": ".xml"
-          }
-        },
-        "runtime": {
-          "lib/net6.0/BepuPhysics.dll": {
-            "related": ".xml"
-          }
-        }
-      },
-      "BepuUtilities/2.4.0": {
-        "type": "package",
-        "compile": {
-          "lib/net6.0/BepuUtilities.dll": {
-            "related": ".xml"
-          }
-        },
-        "runtime": {
-          "lib/net6.0/BepuUtilities.dll": {
-            "related": ".xml"
-          }
-        }
-      },
       "Raylib-cs/7.0.1": {
         "type": "package",
         "compile": {
@@ -69,34 +40,6 @@
     }
   },
   "libraries": {
-    "BepuPhysics/2.4.0": {
-      "sha512": "Ck/BJgSQrBqYrj0T9jGljDdHNILBP5kTPTylc7N/hCzR1XJJc7p6ORzwtjTfjgoYkkdajvLHxEQv6BRC8kaysQ==",
-      "type": "package",
-      "path": "bepuphysics/2.4.0",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "bepuphysics.2.4.0.nupkg.sha512",
-        "bepuphysics.nuspec",
-        "bepuphysicslogo256.png",
-        "lib/net6.0/BepuPhysics.dll",
-        "lib/net6.0/BepuPhysics.xml"
-      ]
-    },
-    "BepuUtilities/2.4.0": {
-      "sha512": "KNMxkzKLHAvV7jRtErxs3rPv71fHToqo/WN96HlT6iomWuwL97tohEbt0B1WA8A6sO5t6PP+qF08d4T9A8k2uA==",
-      "type": "package",
-      "path": "bepuutilities/2.4.0",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "bepuphysicslogo256.png",
-        "bepuutilities.2.4.0.nupkg.sha512",
-        "bepuutilities.nuspec",
-        "lib/net6.0/BepuUtilities.dll",
-        "lib/net6.0/BepuUtilities.xml"
-      ]
-    },
     "Raylib-cs/7.0.1": {
       "sha512": "Ub764yPExCago40qjPpTQqtYhhA0/aIEderv5XjB5peOXFs7A4YLyyARsfBv0JzCt4C+QvuqH0CrjAJIzgzjKA==",
       "type": "package",
@@ -120,12 +63,11 @@
   },
   "projectFileDependencyGroups": {
     "net10.0": [
-      "BepuPhysics >= 2.4.0",
       "Raylib-cs >= 7.0.1"
     ]
   },
   "packageFolders": {
-    "/var/folders/y7/snwt2c6d0ybg44f1v8dw7vlc0000gn/T/cursor-sandbox-cache/bb919ee1f1d9c664a4309fb8bffe4780/nuget": {}
+    "/Users/mac/.nuget/packages/": {}
   },
   "project": {
     "version": "1.0.0",
@@ -133,7 +75,7 @@
       "projectUniqueName": "/Users/mac/Downloads/git/Ballance/ballance-revival/BallanceRevival.csproj",
       "projectName": "BallanceRevival",
       "projectPath": "/Users/mac/Downloads/git/Ballance/ballance-revival/BallanceRevival.csproj",
-      "packagesPath": "/var/folders/y7/snwt2c6d0ybg44f1v8dw7vlc0000gn/T/cursor-sandbox-cache/bb919ee1f1d9c664a4309fb8bffe4780/nuget",
+      "packagesPath": "/Users/mac/.nuget/packages/",
       "outputPath": "/Users/mac/Downloads/git/Ballance/ballance-revival/obj/",
       "projectStyle": "PackageReference",
       "configFilePaths": [
@@ -167,10 +109,6 @@
       "net10.0": {
         "targetAlias": "net10.0",
         "dependencies": {
-          "BepuPhysics": {
-            "target": "Package",
-            "version": "[2.4.0, )"
-          },
           "Raylib-cs": {
             "target": "Package",
             "version": "[7.0.1, )"

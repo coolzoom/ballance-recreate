@@ -21,6 +21,18 @@ public static class Program
             return;
         }
 
+        if (args.Length > 0 && args[0] == "--test")
+        {
+            Environment.Exit(PhysicsSelfTest.Run(gameRoot));
+            return;
+        }
+
+        if (args.Length > 0 && args[0] == "--probe")
+        {
+            ProbeBalls(gameRoot);
+            return;
+        }
+
         string? shot = args.Length > 1 && args[0] == "--shot" ? Path.GetFullPath(args[1]) : null;
         int startLevel = args.Length > 2 && int.TryParse(args[2], out int lv) ? Math.Clamp(lv, 0, 12) : 1;
         using var engine = new GameEngine(gameRoot, 1280, 720) { ScreenshotPath = shot, StartLevel = startLevel };
@@ -52,6 +64,31 @@ public static class Program
             Console.WriteLine($"  Level {i:D2}: OK | Objects: {level.RawFile.Objects.Count:D3} | Renderables: {level.AllRenderables.Count:D3} | Triangles: {collider.TriangleCount:D5} | Checkpoints: {level.CheckpointEntities.Count} | Resetpoints: {level.ResetPointEntities.Count}");
         }
         Console.WriteLine("[VERIFICATION] All 12 levels verified successfully!");
+    }
+
+    private static void ProbeBalls(string gameRoot)
+    {
+        string path = Path.Combine(gameRoot, "3D Entities", "Balls.nmo");
+        var balls = NmoLevel.Load(path);
+        foreach (var e in balls.Entities.Values)
+        {
+            if (e.Mesh == null || e.Mesh.Positions.Length == 0) continue;
+            var lmin = new System.Numerics.Vector3(float.MaxValue);
+            var lmax = new System.Numerics.Vector3(float.MinValue);
+            var wmin = lmin;
+            var wmax = lmax;
+            foreach (var v in e.Mesh.Positions)
+            {
+                lmin = System.Numerics.Vector3.Min(lmin, v);
+                lmax = System.Numerics.Vector3.Max(lmax, v);
+                var w = System.Numerics.Vector3.Transform(v, e.WorldMatrix);
+                wmin = System.Numerics.Vector3.Min(wmin, w);
+                wmax = System.Numerics.Vector3.Max(wmax, w);
+            }
+            var ls = lmax - lmin;
+            var ws = wmax - wmin;
+            Console.WriteLine($"{e.Name,-28} verts={e.Mesh.Positions.Length,5} localSize=({ls.X:F3},{ls.Y:F3},{ls.Z:F3}) worldSize=({ws.X:F3},{ws.Y:F3},{ws.Z:F3}) worldRadiusY={ws.Y / 2:F3}");
+        }
     }
 
     private static string FindGameRoot()

@@ -58,12 +58,14 @@ public static class LitShader
         {
             if (surface.z < 0.5 || ballPos.w <= 0.0) return 0.0;
             float h = ballPos.y - fragWorld.y;
-            if (h < -0.2 || h > 40.0) return 0.0;
+            if (h < -0.2 || h > 20.0) return 0.0;
             float d = length(fragWorld.xz - ballPos.xz);
-            float r = ballPos.w * (0.85 + h * 0.025);
-            float soft = ballPos.w * (0.35 + h * 0.06);
+            // Tighter shadow at the contact point, spreading as height increases
+            float r = ballPos.w * (0.7 + h * 0.05);
+            float soft = ballPos.w * (0.2 + h * 0.1);
             float s = 1.0 - smoothstep(r - soft, r + soft, d);
-            return s * (1.0 - smoothstep(4.0, 40.0, h)) * 0.75;
+            // Faster vertical decay for a more grounded look
+            return s * (1.0 - smoothstep(2.0, 15.0, h)) * 0.8;
         }
 
         vec3 softClip(vec3 c)
@@ -110,8 +112,10 @@ public static class LitShader
                 light += lightColor[i] * att * lambert;
             }
 
-            float rim = pow(1.0 - max(dot(n, v), 0.0), 4.0);
-            vec3 color = texel.rgb * light + spec + skyTint * rim * 0.12;
+            // Fresnel-style rim lighting for better edge definition
+            float fresnel = pow(1.0 - max(dot(n, v), 0.0), 3.0);
+            vec3 rimColor = mix(skyTint, sunTint, max(dot(n, sunDir), 0.0));
+            vec3 color = texel.rgb * light + spec + rimColor * fresnel * 0.15;
             color = softClip(color);
 
             float fog = 1.0 - exp(-fogDensity * dist);

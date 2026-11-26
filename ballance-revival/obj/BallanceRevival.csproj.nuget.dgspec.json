@@ -10,7 +10,7 @@
         "projectUniqueName": "/Users/mac/Downloads/git/Ballance/ballance-revival/BallanceRevival.csproj",
         "projectName": "BallanceRevival",
         "projectPath": "/Users/mac/Downloads/git/Ballance/ballance-revival/BallanceRevival.csproj",
-        "packagesPath": "/var/folders/y7/snwt2c6d0ybg44f1v8dw7vlc0000gn/T/cursor-sandbox-cache/bb919ee1f1d9c664a4309fb8bffe4780/nuget",
+        "packagesPath": "/Users/mac/.nuget/packages/",
         "outputPath": "/Users/mac/Downloads/git/Ballance/ballance-revival/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
@@ -44,10 +44,6 @@
         "net10.0": {
           "targetAlias": "net10.0",
           "dependencies": {
-            "BepuPhysics": {
-              "target": "Package",
-              "version": "[2.4.0, )"
-            },
             "Raylib-cs": {
               "target": "Package",
               "version": "[7.0.1, )"

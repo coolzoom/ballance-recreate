@@ -28,7 +28,9 @@ public class BallProperties
     public string TextureName { get; init; } = "Ball_Wood.bmp";
     public string MeshName { get; init; } = "Ball_Wood_Mesh";
 
-    public static BallProperties Wood => new()
+    // Static readonly fields instead of expression-bodied properties (#9)
+    // Avoids allocating a new BallProperties object on every access.
+    public static readonly BallProperties Wood = new()
     {
         Material = BallMaterial.Wood,
         Name = "Wood Ball",
@@ -45,7 +47,7 @@ public class BallProperties
         MeshName = "Ball_Wood_Mesh"
     };
 
-    public static BallProperties Stone => new()
+    public static readonly BallProperties Stone = new()
     {
         Material = BallMaterial.Stone,
         Name = "Stone Ball",
@@ -62,7 +64,7 @@ public class BallProperties
         MeshName = "Ball_Stone_HighRes_Mesh"
     };
 
-    public static BallProperties Paper => new()
+    public static readonly BallProperties Paper = new()
     {
         Material = BallMaterial.Paper,
         Name = "Paper Ball",

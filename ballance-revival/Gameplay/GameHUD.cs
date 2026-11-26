@@ -44,7 +44,7 @@ public class GameHUD
     }
 
     // Original in-game HUD is only the score plate and the life spheres.
-    private static void DrawScore(int screenWidth, int screenHeight, int score)
+        private static void DrawScore(int screenWidth, int screenHeight, int score)
     {
         const int plateW = 156;
         const int plateH = 46;
@@ -54,7 +54,17 @@ public class GameHUD
         var metal = new Color((byte)186, (byte)196, (byte)206, (byte)230);
         var metalDim = new Color((byte)120, (byte)132, (byte)144, (byte)210);
 
-        Raylib.DrawRectangleRounded(plate, 0.35f, 8, new Color((byte)28, (byte)34, (byte)42, (byte)210));
+        // Base Plate
+        Raylib.DrawRectangleRounded(plate, 0.35f, 8, new Color((byte)20, (byte)25, (byte)32, (byte)220));
+        
+        // Simulated Gradient Fill: Drawing thin horizontal lines to create a subtle vertical shift
+        for (int i = 0; i < plateH; i++)
+        { 
+            float t = (float)i / plateH;
+            Color rowCol = new Color((byte)(28 + t * 10), (byte)(34 + t * 10), (byte)(42 + t * 10), (byte)210);
+            Raylib.DrawLine(x + 4, y + i, x + plateW - 4, y + i, rowCol);
+        }
+
         Raylib.DrawRectangleRoundedLines(plate, 0.35f, 8, metal);
         Raylib.DrawRectangleRoundedLines(new Rectangle(x + 3, y + 3, plateW - 6, plateH - 6), 0.32f, 8, metalDim);
 
@@ -101,8 +111,15 @@ public class GameHUD
         }
     }
 
-    private static void DrawLifeSphere(int cx, int cy, int radius)
+        private static void DrawLifeSphere(int cx, int cy, int radius)
     {
+        // Outer Glow
+        for (int i = 1; i <= 3; i++)
+        { 
+            Raylib.DrawCircle(cx, cy, radius + i * 2, new Color((byte)100, (byte)120, (byte)150, (byte)(50 / i)));
+        }
+
+        // Main Sphere
         Raylib.DrawCircle(cx, cy, radius, new Color((byte)92, (byte)100, (byte)110, (byte)255));
         Raylib.DrawCircle(cx - 1, cy - 1, radius - 2, new Color((byte)168, (byte)176, (byte)186, (byte)255));
         Raylib.DrawCircle(cx - 3, cy - 4, radius - 6, new Color((byte)226, (byte)232, (byte)238, (byte)255));

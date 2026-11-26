@@ -79,6 +79,8 @@ public class TriangleMeshCollider
     private readonly float _cellSize;
     private readonly Dictionary<long, List<int>> _grid = [];
     private readonly List<CollisionTriangle> _triangles = [];
+    // Reusable set to avoid per-frame GC allocation (#7)
+    private readonly HashSet<int> _checkedTriangles = [];
 
     public TriangleMeshCollider(float cellSize = 8.0f)
     {
@@ -86,6 +88,7 @@ public class TriangleMeshCollider
     }
 
     public int TriangleCount => _triangles.Count;
+    public IReadOnlyList<CollisionTriangle> Triangles => _triangles;
 
     public void AddEntity(NmoEntity entity)
     {
@@ -145,14 +148,15 @@ public class TriangleMeshCollider
         }
     }
 
+    // Asymmetric spatial hash to reduce key collisions (#6)
     private static long GetKey(int x, int y, int z)
     {
         unchecked
         {
-            long h1 = (long)x * 73856093;
-            long h2 = (long)y * 19349663;
-            long h3 = (long)z * 83492791;
-            return h1 ^ h2 ^ h3;
+            long h = (long)x * 73856093;
+            h = (h * 31) ^ ((long)y * 19349663);
+            h = (h * 31) ^ ((long)z * 83492791);
+            return h;
         }
     }
 
@@ -162,70 +166,107 @@ public class TriangleMeshCollider
         contactNormal = Vector3.Zero;
         isGrounded = false;
 
-        float queryRadius = radius + 0.5f;
-        int minX = (int)MathF.Floor((center.X - queryRadius) / _cellSize);
-        int maxX = (int)MathF.Floor((center.X + queryRadius) / _cellSize);
-        int minY = (int)MathF.Floor((center.Y - queryRadius) / _cellSize);
-        int maxY = (int)MathF.Floor((center.Y + queryRadius) / _cellSize);
-        int minZ = (int)MathF.Floor((center.Z - queryRadius) / _cellSize);
-        int maxZ = (int)MathF.Floor((center.Z + queryRadius) / _cellSize);
+        // Iterative depenetration: resolve the deepest penetration first, then re-check (#1)
+        const int maxIterations = 4;
+        int totalContacts = 0;
 
-        var checkedTriangles = new HashSet<int>();
-        int contactCount = 0;
-
-        for (int x = minX; x <= maxX; x++)
+        for (int iter = 0; iter < maxIterations; iter++)
         {
-            for (int y = minY; y <= maxY; y++)
+            Vector3 currentCenter = center + penetrationCorrection;
+
+            float queryRadius = radius + 0.5f;
+            int minX = (int)MathF.Floor((currentCenter.X - queryRadius) / _cellSize);
+            int maxX = (int)MathF.Floor((currentCenter.X + queryRadius) / _cellSize);
+            int minY = (int)MathF.Floor((currentCenter.Y - queryRadius) / _cellSize);
+            int maxY = (int)MathF.Floor((currentCenter.Y + queryRadius) / _cellSize);
+            int minZ = (int)MathF.Floor((currentCenter.Z - queryRadius) / _cellSize);
+            int maxZ = (int)MathF.Floor((currentCenter.Z + queryRadius) / _cellSize);
+
+            _checkedTriangles.Clear(); // Reuse instead of allocating (#7)
+
+            // Find the deepest penetrating triangle this iteration
+            float deepestPenetration = 0f;
+            Vector3 deepestNormal = Vector3.Zero;
+
+            for (int x = minX; x <= maxX; x++)
             {
-                for (int z = minZ; z <= maxZ; z++)
+                for (int y = minY; y <= maxY; y++)
                 {
-                    long key = GetKey(x, y, z);
-                    if (_grid.TryGetValue(key, out var list))
+                    for (int z = minZ; z <= maxZ; z++)
                     {
-                        foreach (int triIndex in list)
+                        long key = GetKey(x, y, z);
+                        if (_grid.TryGetValue(key, out var list))
                         {
-                            if (!checkedTriangles.Add(triIndex)) continue;
-
-                            var tri = _triangles[triIndex];
-
-                            // Fast AABB check
-                            if (center.X + radius < tri.Min.X || center.X - radius > tri.Max.X ||
-                                center.Y + radius < tri.Min.Y || center.Y - radius > tri.Max.Y ||
-                                center.Z + radius < tri.Min.Z || center.Z - radius > tri.Max.Z)
+                            foreach (int triIndex in list)
                             {
-                                continue;
-                            }
+                                if (!_checkedTriangles.Add(triIndex)) continue;
 
-                            Vector3 closest = tri.ClosestPoint(center);
-                            Vector3 diff = center - closest;
-                            float distSq = diff.LengthSquared();
+                                var tri = _triangles[triIndex];
 
-                            if (distSq < radius * radius && distSq > 1e-8f)
-                            {
-                                float dist = MathF.Sqrt(distSq);
-                                float depth = radius - dist;
-                                Vector3 normal = diff / dist;
-
-                                // Ignore back-face collisions
-                                if (Vector3.Dot(normal, tri.Normal) < -0.2f)
-                                    continue;
-
-                                penetrationCorrection += normal * depth;
-                                contactNormal += normal;
-                                contactCount++;
-
-                                if (normal.Y > 0.4f)
+                                // Fast AABB check
+                                if (currentCenter.X + radius < tri.Min.X || currentCenter.X - radius > tri.Max.X ||
+                                    currentCenter.Y + radius < tri.Min.Y || currentCenter.Y - radius > tri.Max.Y ||
+                                    currentCenter.Z + radius < tri.Min.Z || currentCenter.Z - radius > tri.Max.Z)
                                 {
-                                    isGrounded = true;
+                                    continue;
+                                }
+
+                                Vector3 closest = tri.ClosestPoint(currentCenter);
+                                Vector3 diff = currentCenter - closest;
+                                float distSq = diff.LengthSquared();
+
+                                if (distSq < radius * radius)
+                                {
+                                    Vector3 normal;
+                                    float depth;
+
+                                    if (distSq < 1e-8f)
+                                    {
+                                        // Ball center is ON the triangle — deepest penetration case (#2)
+                                        // Fall back to the triangle's geometric normal
+                                        normal = tri.Normal;
+                                        depth = radius;
+                                    }
+                                    else
+                                    {
+                                        float dist = MathF.Sqrt(distSq);
+                                        depth = radius - dist;
+                                        normal = diff / dist;
+
+                                        // Ignore back-face collisions — tightened threshold (#11)
+                                        if (Vector3.Dot(normal, tri.Normal) < -0.1f)
+                                            continue;
+                                    }
+
+                                    if (depth > deepestPenetration)
+                                    {
+                                        deepestPenetration = depth;
+                                        deepestNormal = normal;
+                                    }
+
+                                    // Accumulate contact normal for average direction
+                                    contactNormal += normal;
+                                    totalContacts++;
+
+                                    if (normal.Y > 0.4f)
+                                    {
+                                        isGrounded = true;
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
+
+            if (deepestPenetration < 1e-5f)
+                break; // No more penetration to resolve
+
+            // Resolve only the deepest penetration this iteration (#1)
+            penetrationCorrection += deepestNormal * deepestPenetration;
         }
 
-        if (contactCount > 0)
+        if (totalContacts > 0)
         {
             contactNormal = Vector3.Normalize(contactNormal);
             return true;

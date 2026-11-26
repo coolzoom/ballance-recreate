@@ -3,8 +3,6 @@
 /Users/mac/Downloads/git/Ballance/ballance-revival/bin/Release/net10.0/BallanceRevival.runtimeconfig.json
 /Users/mac/Downloads/git/Ballance/ballance-revival/bin/Release/net10.0/BallanceRevival.dll
 /Users/mac/Downloads/git/Ballance/ballance-revival/bin/Release/net10.0/BallanceRevival.pdb
-/Users/mac/Downloads/git/Ballance/ballance-revival/bin/Release/net10.0/BepuPhysics.dll
-/Users/mac/Downloads/git/Ballance/ballance-revival/bin/Release/net10.0/BepuUtilities.dll
 /Users/mac/Downloads/git/Ballance/ballance-revival/bin/Release/net10.0/Raylib-cs.dll
 /Users/mac/Downloads/git/Ballance/ballance-revival/bin/Release/net10.0/runtimes/linux-x64/native/libraylib.so
 /Users/mac/Downloads/git/Ballance/ballance-revival/bin/Release/net10.0/runtimes/osx-arm64/native/libraylib.dylib
