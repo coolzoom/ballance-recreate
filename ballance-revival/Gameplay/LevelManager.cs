@@ -365,16 +365,10 @@ public class LevelManager
             }
         }
 
-        // Ball-vs-box contact is resolved inside BallPlayer. Here separate any boxes that
-        // overlap or are pushed into each other, then run each box's own dynamics.
-        for (int i = 0; i < Boxes.Count; i++)
-            for (int j = i + 1; j < Boxes.Count; j++)
-                MovableBox.ResolvePair(Boxes[i], Boxes[j]);
-
-        foreach (var box in Boxes)
-        {
-            box.Update(dt, Collider);
-        }
+        // Step all boxes with substepped OBB-vs-world and box-vs-box resolution,
+        // then re-separate the ball if any crate was stopped by a wall.
+        MovableBox.StepAll(Boxes, dt, Collider);
+        Player.ResolvePostBoxStep(Boxes, Collider, dt);
 
         // Check goal (PE_Balloon UFO platform)
         if (!IsLevelComplete)

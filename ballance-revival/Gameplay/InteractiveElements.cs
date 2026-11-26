@@ -98,101 +98,203 @@ public class MovableBox
     public Vector3 Velocity { get; set; }
     // P_Box_Mesh spans -2.5..2.5 on every axis
     public Vector3 HalfExtents { get; } = new(2.5f, 2.5f, 2.5f);
-    public float Mass { get; } = 25.0f;
+    public float Mass { get; } = 15.0f;
+    public bool IsGrounded { get; private set; }
+    public Vector3 AxisX { get; } = Vector3.UnitX;
+    public Vector3 AxisY { get; } = Vector3.UnitY;
+    public Vector3 AxisZ { get; } = Vector3.UnitZ;
     public NmoEntity? Entity { get; }
 
     public MovableBox(Vector3 position, NmoEntity? entity = null)
     {
         Position = position;
         Entity = entity;
+
+        // Extract horizontal orientation from entity WorldMatrix (e.g., rotated crates in Level 3)
+        if (entity != null)
+        {
+            var m = entity.WorldMatrix;
+            var rx = new Vector3(m.M11, 0f, m.M13);
+            var rz = new Vector3(m.M31, 0f, m.M33);
+            if (rx.LengthSquared() > 1e-4f && rz.LengthSquared() > 1e-4f)
+            {
+                AxisX = Vector3.Normalize(rx);
+                AxisY = Vector3.UnitY;
+                AxisZ = Vector3.Normalize(Vector3.Cross(AxisX, AxisY));
+                if (Vector3.Dot(AxisZ, rz) < 0f) AxisZ = -AxisZ;
+            }
+        }
     }
 
     // The ball-vs-box contact is resolved inside BallPlayer (its own substeps) so
     // the ball reacts in the same frame and can never tunnel through a box. This
-    // method only simulates the box's own dynamics: gravity, settling friction,
-    // integration, and the box's collision with the level floor.
+    // method simulates the box's own dynamics: gravity, sliding friction, integration,
+    // and exact OBB-vs-TriangleMesh collision against floors, curbs, and walls.
     public void Update(float dt, Physics.TriangleMeshCollider? collider = null)
     {
-        // Apply gravity (#8 fix)
+        // Apply gravity
         Velocity = new Vector3(Velocity.X, Velocity.Y + BallPlayer.Gravity * dt, Velocity.Z);
 
-        // Kinetic friction with the floor. Boxes slide when pushed and gradually settle;
-        // a gentle resting drag (not a hard brake) so a driven ball can actually push it.
+        // Kinetic friction with the floor so crates slide smoothly then settle
         float drag = MathF.Exp(-BoxKineticFriction * dt);
         Velocity = new Vector3(Velocity.X * drag, Velocity.Y, Velocity.Z * drag);
 
         // Integrate position
         Position += Velocity * dt;
 
-        // Floor collision for the box (#8 fix)
-        // Approximate as a sphere of radius equal to half-extent Y for ground checking
+        // Exact OBB-vs-TriangleMesh collision (prevents corners clipping into walls/curbs)
         if (collider != null)
         {
-            float boxCheckRadius = HalfExtents.Y;
-            if (collider.CollideSphere(Position, boxCheckRadius, out Vector3 correction, out Vector3 normal, out bool _))
+            if (collider.CollideBox(Position, HalfExtents, AxisX, AxisY, AxisZ, out Vector3 correction, out Vector3 normal, out bool grounded))
             {
                 Position += correction;
+                IsGrounded = grounded;
                 float normalVel = Vector3.Dot(Velocity, normal);
                 if (normalVel < 0f)
                 {
                     Velocity -= normal * normalVel;
                 }
             }
+            else
+            {
+                IsGrounded = false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Substepped simulation for all boxes in a level: integrates motion, resolves
+    /// box-vs-box contacts (before and after wall collisions) so crates never overlap
+    /// each other or sink into walls/curbs.
+    /// </summary>
+    public static void StepAll(IReadOnlyList<MovableBox> boxes, float dt, Physics.TriangleMeshCollider collider)
+    {
+        if (boxes.Count == 0) return;
+
+        const int subSteps = 4;
+        float subDt = dt / subSteps;
+
+        for (int step = 0; step < subSteps; step++)
+        {
+            for (int i = 0; i < boxes.Count; i++)
+                boxes[i].Update(subDt, collider);
+
+            // Resolve box-vs-box contacts (2 passes for chains / stacked crates)
+            for (int pass = 0; pass < 2; pass++)
+            {
+                for (int i = 0; i < boxes.Count; i++)
+                {
+                    for (int j = i + 1; j < boxes.Count; j++)
+                        ResolvePair(boxes[i], boxes[j]);
+                }
+
+                // Re-enforce wall/floor constraints after box-vs-box push
+                for (int i = 0; i < boxes.Count; i++)
+                {
+                    var b = boxes[i];
+                    if (collider.CollideBox(b.Position, b.HalfExtents, b.AxisX, b.AxisY, b.AxisZ, out Vector3 corr, out Vector3 n, out bool g))
+                    {
+                        b.Position += corr;
+                        if (g) b.IsGrounded = true;
+                        float nv = Vector3.Dot(b.Velocity, n);
+                        if (nv < 0f) b.Velocity -= n * nv;
+                    }
+                }
+            }
         }
     }
 
     // Kinetic friction coefficient applied (exponentially, frame-rate independent) to a
-    // box sliding on the floor. Small enough that a driven ball can slide the box, large
-    // enough that it eventually settles after being pushed.
+    // box sliding on the floor.
     public const float BoxKineticFriction = 2.5f;
 
-    // Restitution used when two boxes collide / are pushed into each other (kept low so
-    // chained pushes move together instead of bouncing apart).
+    // Restitution used when two boxes collide / are pushed into each other.
     public const float BoxRestitution = 0.05f;
 
     /// <summary>
-    /// Resolve two overlapping boxes against each other (AABB vs AABB). Momentum is
-    /// exchanged along the minimum-overlap axis so a box driven into another pushes it
-    /// instead of sinking in, and any residual penetration is split by inverse mass.
+    /// Exact 3D OBB-vs-OBB collision for Y-rotated crates (5 SAT axes: UnitY, A.X, A.Z, B.X, B.Z).
+    /// Handles both side-by-side pushing and stacked crates without overlap.
     /// </summary>
     public static void ResolvePair(MovableBox a, MovableBox b)
     {
-        Vector3 d = a.Position - b.Position;          // points from b to a
-        Vector3 overlap = (a.HalfExtents + b.HalfExtents) - Vector3.Abs(d);
+        Vector3 delta = a.Position - b.Position; // points from b to a
 
-        if (overlap.X <= 0f || overlap.Y <= 0f || overlap.Z <= 0f) return; // no overlap
+        float maxDist = a.HalfExtents.Length() + b.HalfExtents.Length();
+        if (delta.LengthSquared() >= maxDist * maxDist) return;
 
-        // Minimum-overlap axis is the contact axis; n points from b to a (sign of d),
-        // not from overlap (which is always positive).
-        Vector3 n;
-        float pen;
-        if (overlap.X <= overlap.Y && overlap.X <= overlap.Z)
+        float minOverlap = float.MaxValue;
+        Vector3 n = Vector3.Zero;
+
+        bool CheckAxis(Vector3 axis)
         {
-            n = new Vector3(d.X >= 0f ? 1f : -1f, 0f, 0f); pen = overlap.X;
-        }
-        else if (overlap.Y <= overlap.Z)
-        {
-            n = new Vector3(0f, d.Y >= 0f ? 1f : -1f, 0f); pen = overlap.Y;
-        }
-        else
-        {
-            n = new Vector3(0f, 0f, d.Z >= 0f ? 1f : -1f); pen = overlap.Z;
+            float ra =
+                a.HalfExtents.X * MathF.Abs(Vector3.Dot(a.AxisX, axis)) +
+                a.HalfExtents.Y * MathF.Abs(Vector3.Dot(a.AxisY, axis)) +
+                a.HalfExtents.Z * MathF.Abs(Vector3.Dot(a.AxisZ, axis));
+            float rb =
+                b.HalfExtents.X * MathF.Abs(Vector3.Dot(b.AxisX, axis)) +
+                b.HalfExtents.Y * MathF.Abs(Vector3.Dot(b.AxisY, axis)) +
+                b.HalfExtents.Z * MathF.Abs(Vector3.Dot(b.AxisZ, axis));
+
+            float proj = Vector3.Dot(delta, axis);
+            float overlap = (ra + rb) - MathF.Abs(proj);
+            if (overlap <= 0f) return false;
+
+            if (overlap < minOverlap)
+            {
+                minOverlap = overlap;
+                n = proj >= 0f ? axis : -axis; // points from b to a
+            }
+            return true;
         }
 
-        // Split separation by inverse mass (lighter box moves more).
+        if (!CheckAxis(Vector3.UnitY)) return;
+        if (!CheckAxis(a.AxisX)) return;
+        if (!CheckAxis(a.AxisZ)) return;
+        if (!CheckAxis(b.AxisX)) return;
+        if (!CheckAxis(b.AxisZ)) return;
+
+        if (minOverlap <= 1e-5f) return;
+
         float invMassSum = 1f / a.Mass + 1f / b.Mass;
-        float aShare = (1f / a.Mass) / invMassSum;
-
-        float vn = Vector3.Dot(a.Velocity - b.Velocity, n);   // < 0 means approaching
+        float vn = Vector3.Dot(a.Velocity - b.Velocity, n); // < 0 means approaching
         if (vn < 0f)
         {
             float restitution = (-vn > BallPlayer.BallBoxBounceSpeed) ? BoxRestitution : 0f;
             float jn = -(1f + restitution) * vn / invMassSum;
-            a.Velocity += n * (jn / a.Mass);
-            b.Velocity -= n * (jn / b.Mass);
+            Vector3 impA = n * (jn / a.Mass);
+            Vector3 impB = -n * (jn / b.Mass);
+            if (a.IsGrounded && impA.Y < 0f) impA.Y = 0f;
+            if (b.IsGrounded && impB.Y < 0f) impB.Y = 0f;
+            a.Velocity += impA;
+            b.Velocity += impB;
         }
-        float bShare = (1f / b.Mass) / invMassSum;
-        a.Position += n * (pen * aShare);
-        b.Position -= n * (pen * bShare);
+
+        // Positional separation: handle stacked crates cleanly
+        if (MathF.Abs(n.Y) > 0.5f)
+        {
+            if (n.Y > 0f && b.IsGrounded)
+            {
+                a.Position += n * minOverlap;
+                a.IsGrounded = true;
+            }
+            else if (n.Y < 0f && a.IsGrounded)
+            {
+                b.Position -= n * minOverlap;
+                b.IsGrounded = true;
+            }
+            else
+            {
+                a.Position += n * (minOverlap * 0.5f);
+                b.Position -= n * (minOverlap * 0.5f);
+            }
+        }
+        else
+        {
+            float aShare = (1f / a.Mass) / invMassSum;
+            float bShare = (1f / b.Mass) / invMassSum;
+            a.Position += n * (minOverlap * aShare);
+            b.Position -= n * (minOverlap * bShare);
+        }
     }
 }

@@ -274,4 +274,205 @@ public class TriangleMeshCollider
 
         return false;
     }
+
+    /// <summary>
+    /// Exact Oriented Bounding Box (OBB) vs TriangleMesh collision using SAT + iterative depenetration.
+    /// Prevents crate corners and edges from clipping into walls, curbs, and floors.
+    /// </summary>
+    public bool CollideBox(
+        Vector3 center,
+        Vector3 halfExtents,
+        Vector3 axisX,
+        Vector3 axisY,
+        Vector3 axisZ,
+        out Vector3 penetrationCorrection,
+        out Vector3 contactNormal,
+        out bool isGrounded)
+    {
+        penetrationCorrection = Vector3.Zero;
+        contactNormal = Vector3.Zero;
+        isGrounded = false;
+
+        // World-space AABB half-extents of the oriented box
+        Vector3 worldHalf = new(
+            MathF.Abs(axisX.X) * halfExtents.X + MathF.Abs(axisY.X) * halfExtents.Y + MathF.Abs(axisZ.X) * halfExtents.Z,
+            MathF.Abs(axisX.Y) * halfExtents.X + MathF.Abs(axisY.Y) * halfExtents.Y + MathF.Abs(axisZ.Y) * halfExtents.Z,
+            MathF.Abs(axisX.Z) * halfExtents.X + MathF.Abs(axisY.Z) * halfExtents.Y + MathF.Abs(axisZ.Z) * halfExtents.Z
+        );
+
+        const int maxIterations = 4;
+        int totalContacts = 0;
+
+        for (int iter = 0; iter < maxIterations; iter++)
+        {
+            Vector3 currentCenter = center + penetrationCorrection;
+            Vector3 boxMin = currentCenter - worldHalf;
+            Vector3 boxMax = currentCenter + worldHalf;
+
+            int minX = (int)MathF.Floor((boxMin.X - 0.25f) / _cellSize);
+            int maxX = (int)MathF.Floor((boxMax.X + 0.25f) / _cellSize);
+            int minY = (int)MathF.Floor((boxMin.Y - 0.25f) / _cellSize);
+            int maxY = (int)MathF.Floor((boxMax.Y + 0.25f) / _cellSize);
+            int minZ = (int)MathF.Floor((boxMin.Z - 0.25f) / _cellSize);
+            int maxZ = (int)MathF.Floor((boxMax.Z + 0.25f) / _cellSize);
+
+            _checkedTriangles.Clear();
+
+            float deepestPenetration = 0f;
+            Vector3 deepestNormal = Vector3.Zero;
+
+            for (int x = minX; x <= maxX; x++)
+            {
+                for (int y = minY; y <= maxY; y++)
+                {
+                    for (int z = minZ; z <= maxZ; z++)
+                    {
+                        long key = GetKey(x, y, z);
+                        if (!_grid.TryGetValue(key, out var list)) continue;
+
+                        foreach (int triIndex in list)
+                        {
+                            if (!_checkedTriangles.Add(triIndex)) continue;
+
+                            var tri = _triangles[triIndex];
+
+                            // Fast AABB reject
+                            if (boxMax.X < tri.Min.X || boxMin.X > tri.Max.X ||
+                                boxMax.Y < tri.Min.Y || boxMin.Y > tri.Max.Y ||
+                                boxMax.Z < tri.Min.Z || boxMin.Z > tri.Max.Z)
+                            {
+                                continue;
+                            }
+
+                            if (!TestBoxTriangleSat(
+                                    currentCenter, halfExtents, axisX, axisY, axisZ,
+                                    tri, out Vector3 pushNormal, out float depth))
+                            {
+                                continue;
+                            }
+
+                            // Ignore back-face collisions
+                            if (Vector3.Dot(pushNormal, tri.Normal) < -0.1f)
+                                continue;
+
+                            if (depth > deepestPenetration)
+                            {
+                                deepestPenetration = depth;
+                                deepestNormal = pushNormal;
+                            }
+
+                            contactNormal += pushNormal;
+                            totalContacts++;
+
+                            if (pushNormal.Y > 0.4f)
+                            {
+                                isGrounded = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (deepestPenetration < 1e-5f)
+                break;
+
+            penetrationCorrection += deepestNormal * deepestPenetration;
+        }
+
+        if (totalContacts > 0)
+        {
+            contactNormal = Vector3.Normalize(contactNormal);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TestBoxTriangleSat(
+        Vector3 boxCenter,
+        Vector3 h,
+        Vector3 ax,
+        Vector3 ay,
+        Vector3 az,
+        in CollisionTriangle tri,
+        out Vector3 mtvNormal,
+        out float mtvDepth)
+    {
+        mtvNormal = Vector3.Zero;
+        mtvDepth = float.MaxValue;
+
+        // Triangle vertices relative to box center
+        Vector3 v0 = tri.A - boxCenter;
+        Vector3 v1 = tri.B - boxCenter;
+        Vector3 v2 = tri.C - boxCenter;
+
+        Vector3 e0 = v1 - v0;
+        Vector3 e1 = v2 - v1;
+        Vector3 e2 = v0 - v2;
+
+        bool TestAxis(Vector3 rawAxis, float bias, ref Vector3 bestAxis, ref float bestDepth)
+        {
+            float lenSq = rawAxis.LengthSquared();
+            if (lenSq < 1e-8f) return true; // degenerate axis, skip
+            Vector3 axis = rawAxis / MathF.Sqrt(lenSq);
+
+            float r =
+                h.X * MathF.Abs(Vector3.Dot(ax, axis)) +
+                h.Y * MathF.Abs(Vector3.Dot(ay, axis)) +
+                h.Z * MathF.Abs(Vector3.Dot(az, axis));
+
+            float p0 = Vector3.Dot(v0, axis);
+            float p1 = Vector3.Dot(v1, axis);
+            float p2 = Vector3.Dot(v2, axis);
+            float minT = MathF.Min(p0, MathF.Min(p1, p2));
+            float maxT = MathF.Max(p0, MathF.Max(p1, p2));
+
+            if (minT > r || maxT < -r)
+                return false; // Separating axis found
+
+            // Overlap from pushing box in +axis vs -axis direction
+            float pushPos = maxT + r; // move box in +axis so -r >= maxT
+            float pushNeg = r - minT; // move box in -axis so +r <= minT
+            float depth;
+            Vector3 dir;
+            if (pushPos <= pushNeg)
+            {
+                depth = pushPos;
+                dir = axis;
+            }
+            else
+            {
+                depth = pushNeg;
+                dir = -axis;
+            }
+
+            if (depth + bias < bestDepth)
+            {
+                bestDepth = depth;
+                bestAxis = dir;
+            }
+            return true;
+        }
+
+        // 1. Triangle face normal (slightly preferred to prevent catching on internal coplanar floor edges)
+        if (!TestAxis(tri.Normal, -0.02f, ref mtvNormal, ref mtvDepth)) return false;
+
+        // 2. Box face normals
+        if (!TestAxis(ax, 0f, ref mtvNormal, ref mtvDepth)) return false;
+        if (!TestAxis(ay, 0f, ref mtvNormal, ref mtvDepth)) return false;
+        if (!TestAxis(az, 0f, ref mtvNormal, ref mtvDepth)) return false;
+
+        // 3. 9 Edge-edge cross products
+        if (!TestAxis(Vector3.Cross(ax, e0), 0.005f, ref mtvNormal, ref mtvDepth)) return false;
+        if (!TestAxis(Vector3.Cross(ax, e1), 0.005f, ref mtvNormal, ref mtvDepth)) return false;
+        if (!TestAxis(Vector3.Cross(ax, e2), 0.005f, ref mtvNormal, ref mtvDepth)) return false;
+        if (!TestAxis(Vector3.Cross(ay, e0), 0.005f, ref mtvNormal, ref mtvDepth)) return false;
+        if (!TestAxis(Vector3.Cross(ay, e1), 0.005f, ref mtvNormal, ref mtvDepth)) return false;
+        if (!TestAxis(Vector3.Cross(ay, e2), 0.005f, ref mtvNormal, ref mtvDepth)) return false;
+        if (!TestAxis(Vector3.Cross(az, e0), 0.005f, ref mtvNormal, ref mtvDepth)) return false;
+        if (!TestAxis(Vector3.Cross(az, e1), 0.005f, ref mtvNormal, ref mtvDepth)) return false;
+        if (!TestAxis(Vector3.Cross(az, e2), 0.005f, ref mtvNormal, ref mtvDepth)) return false;
+
+        return mtvDepth < float.MaxValue && mtvDepth > 0f;
+    }
 }

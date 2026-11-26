@@ -178,7 +178,7 @@ public class BallPlayer
         // Ball-vs-box collision: each box is a movable solid, so resolve it here in
         // the same substep. This keeps the ball reacting instantly and prevents it
         // from tunneling through a box that the collider (floors/rails only) cannot see.
-        ResolveBoxCollisions(boxes);
+        ResolveBoxCollisions(boxes, dt);
 
         // Frame-rate-independent rotational damping (#10 fix)
         float angDamp = MathF.Exp(-0.8f * dt);
@@ -189,16 +189,36 @@ public class BallPlayer
     // box's own mass (unlike the immovable floor). Restitution is gated so a ball
     // gently pressed against a box settles instead of bouncing away.
     internal const float BallBoxBounceSpeed = 3.0f;
-    private const float BallBoxRestitution = 0.10f;
-    private const float BallBoxFriction = 0.35f;
+    private const float BallBoxRestitution = 0.12f;
+    private const float BallBoxFriction = 0.25f;
 
     /// <summary>
-    /// Resolve the ball against every movable box as a proper two-body contact.
-    /// Momentum is exchanged by the two masses so the ball is pushed back / deflected
-    /// and cannot pass through, and a contact whose normal points mostly upward also
-    /// grounds the ball so it can roll on top of the box like a surface.
+    /// Post-step re-separation after MovableBox.StepAll resolves box-vs-box and box-vs-wall
+    /// contacts, so a crate stopped by a wall never leaves the ball overlapping it.
     /// </summary>
-    private void ResolveBoxCollisions(IReadOnlyList<MovableBox>? boxes)
+    public void ResolvePostBoxStep(IReadOnlyList<MovableBox>? boxes, TriangleMeshCollider collider, float dt)
+    {
+        if (boxes is null || boxes.Count == 0) return;
+        ResolveBoxCollisions(boxes, dt);
+        if (collider.CollideSphere(Position, Properties.Radius, out Vector3 corr, out Vector3 n, out bool g))
+        {
+            Position += corr;
+            if (g)
+            {
+                IsGrounded = true;
+                LastContactNormal = n;
+            }
+            float nv = Vector3.Dot(Velocity, n);
+            if (nv < 0f) Velocity -= n * nv;
+        }
+    }
+
+    /// <summary>
+    /// Resolve the ball against every movable box as an exact Sphere-vs-OBB two-body contact.
+    /// Momentum is exchanged by inverse mass so the ball pushes crates naturally without
+    /// tunneling, getting sucked in, or launching onto the top face.
+    /// </summary>
+    private void ResolveBoxCollisions(IReadOnlyList<MovableBox>? boxes, float dt)
     {
         if (boxes is null) return;
 
@@ -207,157 +227,134 @@ public class BallPlayer
 
         foreach (var box in boxes)
         {
-            Vector3 diff = Position - box.Position;
+            Vector3 rel = Position - box.Position;
 
-            // Closest point of the box to the ball center (sphere vs AABB) + the
-            // geometric contact normal, used as a fallback when no face is being driven into.
-            Vector3 clamped = Vector3.Clamp(diff, -box.HalfExtents, box.HalfExtents);
-            Vector3 toBall = diff - clamped;                 // == Position - (box.Position + clamped)
-            float distSq = toBall.LengthSquared();
-            Vector3 geoNormal;
-            float geoPen;
-            if (distSq > 1e-6f)
+            // Project ball center into the box's local OBB coordinates (handles rotated crates)
+            Vector3 localBall = new(
+                Vector3.Dot(rel, box.AxisX),
+                Vector3.Dot(rel, box.AxisY),
+                Vector3.Dot(rel, box.AxisZ)
+            );
+
+            Vector3 clamped = Vector3.Clamp(localBall, -box.HalfExtents, box.HalfExtents);
+            Vector3 localDiff = localBall - clamped;
+            float distSq = localDiff.LengthSquared();
+
+            if (distSq >= radius * radius)
+                continue;
+
+            Vector3 localNormal;
+            float penetration;
+            if (distSq > 1e-8f)
             {
                 float dist = MathF.Sqrt(distSq);
-                geoNormal = toBall / dist;
-                geoPen = radius - dist;
+                localNormal = localDiff / dist;
+                penetration = radius - dist;
             }
             else
             {
-                // Ball centre inside the box: push out along the shallowest axis.
-                Vector3 pen = box.HalfExtents - Vector3.Abs(diff);
-                if (pen.X >= pen.Y && pen.X >= pen.Z)      geoNormal = new Vector3(diff.X > 0f ? 1f : -1f, 0f, 0f);
-                else if (pen.Y >= pen.Z)                   geoNormal = new Vector3(0f, diff.Y > 0f ? 1f : -1f, 0f);
-                else                                       geoNormal = new Vector3(0f, 0f, diff.Z > 0f ? 1f : -1f);
-                geoPen = radius;
-            }
-
-            if (geoPen <= 1e-5f) continue;                // touching or apart
-
-            // Mass-weighted separation shares (constant for this contact).
-            float ballShare = box.Mass / (Properties.Mass + box.Mass);
-            float boxShare = Properties.Mass / (Properties.Mass + box.Mass);
-
-            Vector3 vel = Velocity - box.Velocity;        // relative velocity (ball w.r.t. box)
-            float speed = vel.Length();
-
-            // Velocity-directed contact: use the face the ball is actually driving into.
-            // Without this, a ball rolling at the base of a box (its centre below the
-            // box's) snaps onto the bottom face, gets a vertical normal and therefore zero
-            // horizontal impulse, so it slides over the box instead of pushing it.
-            Vector3 normal;
-            float penetration;
-            bool driving;
-            if (speed > 1e-4f && PickApproachFace(radius, diff, vel, box, out int axis, out int sign, out float facePen, out Vector3 faceNormal))
-            {
-                normal = faceNormal;
-                penetration = facePen;
-                driving = true;
-            }
-            else
-            {
-                // Being pressed into but not driven at any face: separate only, no impulse,
-                // so the ball can rest against / under the box without jitter.
-                normal = geoNormal;
-                penetration = geoPen;
-                driving = false;
-            }
-
-            if (!driving)
-            {
-                Position += normal * (penetration * ballShare);
-                box.Position -= normal * (penetration * boxShare);
-                if (normal.Y > 0.4f)
+                // Ball center inside the box: eject along the SHALLOWEST axis (minimum distance to face)
+                Vector3 toFace = box.HalfExtents - Vector3.Abs(localBall);
+                if (toFace.X <= toFace.Y && toFace.X <= toFace.Z)
                 {
-                    IsGrounded = true;
-                    LastContactNormal = normal;
+                    localNormal = new Vector3(localBall.X >= 0f ? 1f : -1f, 0f, 0f);
+                    penetration = toFace.X + radius;
                 }
-                continue;
+                else if (toFace.Z <= toFace.Y)
+                {
+                    localNormal = new Vector3(0f, 0f, localBall.Z >= 0f ? 1f : -1f);
+                    penetration = toFace.Z + radius;
+                }
+                else
+                {
+                    localNormal = new Vector3(0f, localBall.Y >= 0f ? 1f : -1f, 0f);
+                    penetration = toFace.Y + radius;
+                }
             }
 
-            float vn = Vector3.Dot(vel, normal);          // < 0 means approaching
-            float invMassSum = invMassBall + 1f / box.Mass;
+            if (penetration <= 1e-5f) continue;
 
-            // Normal impulse (separating contacts never attract). Restitution is gated
-            // by BallBoxBounceSpeed for a gentle settle on light contacts.
+            // Transform contact normal back to world space (pointing from box -> ball)
+            Vector3 normal = Vector3.Normalize(
+                box.AxisX * localNormal.X +
+                box.AxisY * localNormal.Y +
+                box.AxisZ * localNormal.Z
+            );
+
+            float invMassBox = 1f / box.Mass;
+            float invMassSum = invMassBall + invMassBox;
+            float ballShare = invMassBall / invMassSum;
+            float boxShare = invMassBox / invMassSum;
+
+            Vector3 relVel = Velocity - box.Velocity;
+            float vn = Vector3.Dot(relVel, normal); // < 0 means approaching
+
+            // Normal impulse (separating contacts never attract)
             float jn = 0f;
             if (vn < 0f)
             {
-                float restitution = (-vn > BallBoxBounceSpeed) ? BallBoxRestitution : 0f;
+                float impact = -vn;
+                if (impact > LastImpactSpeed) LastImpactSpeed = impact;
+
+                float restitution = (impact > BallBoxBounceSpeed) ? BallBoxRestitution : 0f;
                 jn = -(1f + restitution) * vn / invMassSum;
                 Velocity += normal * (jn * invMassBall);
-                box.Velocity -= normal * (jn / box.Mass);
+
+                Vector3 boxImp = -normal * (jn * invMassBox);
+                // Side hits push crates horizontally; never slam a grounded crate into the floor
+                if (MathF.Abs(normal.Y) < 0.5f || (box.IsGrounded && boxImp.Y < 0f))
+                    boxImp.Y = 0f;
+                box.Velocity += boxImp;
             }
 
-            // Tangential Coulomb friction on the relative tangential velocity. It both
-            // lets the ball "grab" and roll off a face and drags the box as it grinds.
-            Vector3 relTangent = vel - normal * vn;
+            // Correct Coulomb tangential friction (jt is an impulse, same units as jn)
+            Vector3 relTangent = relVel - normal * vn;
             float relTanSpeed = relTangent.Length();
             if (relTanSpeed > 1e-5f && jn > 1e-6f)
             {
-                float jt = MathF.Min(BallBoxFriction * jn, relTanSpeed);
+                float jt = MathF.Min(BallBoxFriction * jn, relTanSpeed / invMassSum);
                 Vector3 tDir = relTangent / relTanSpeed;
-                float tScale = jt / invMassSum;
-                Velocity += (-tDir) * (tScale * invMassBall);
-                box.Velocity += tDir * (tScale / box.Mass);
+                Velocity -= tDir * (jt * invMassBall);
+
+                Vector3 boxTanImp = tDir * (jt * invMassBox);
+                if (MathF.Abs(normal.Y) < 0.5f || (box.IsGrounded && boxTanImp.Y < 0f))
+                    boxTanImp.Y = 0f;
+                box.Velocity += boxTanImp;
             }
 
-            // Mass-weighted separation so neither body sinks into the other.
-            Position += normal * (penetration * ballShare);
-            box.Position -= normal * (penetration * boxShare);
+            // Mass-weighted positional separation
+            Vector3 ballCorr = normal * (penetration * ballShare);
+            Vector3 boxCorr = -normal * (penetration * boxShare);
+            if (MathF.Abs(normal.Y) < 0.5f)
+            {
+                boxCorr.Y = 0f;
+            }
+            else if (box.IsGrounded && boxCorr.Y < 0f)
+            {
+                ballCorr.Y -= boxCorr.Y;
+                boxCorr.Y = 0f;
+            }
 
-            // A contact whose normal points mostly upward carries the ball, letting
-            // it roll on top of the box just like a ground surface.
+            Position += ballCorr;
+            box.Position += boxCorr;
+
+            // A contact whose normal points mostly upward carries the ball like a floor surface
             if (normal.Y > 0.4f)
             {
                 IsGrounded = true;
                 LastContactNormal = normal;
+                Vector3 tVel = (Velocity - box.Velocity);
+                tVel -= normal * Vector3.Dot(tVel, normal);
+                float tSpeed = tVel.Length();
+                if (tSpeed > 1e-4f)
+                {
+                    float drop = MathF.Min(tSpeed, Properties.RollingResistance * dt);
+                    Velocity -= tVel * (drop / tSpeed);
+                }
+                Vector3 targetAngVel = Vector3.Cross(normal, Velocity - box.Velocity) / radius;
+                AngularVelocity = Vector3.Lerp(AngularVelocity, targetAngVel, 18.0f * dt);
             }
         }
-    }
-
-    /// <summary>
-    /// Pick the box face the ball is driving into, using the relative velocity. This
-    /// makes a fast ball hit a vertical side face (transferring horizontal motion) even
-    /// when its centre is below the box, where the geometric closest point would be the
-    /// bottom face. Scoring = approach speed * plane penetration.
-    /// </summary>
-    private static bool PickApproachFace(float radius, Vector3 diff, Vector3 vel, MovableBox box,
-        out int axis, out int sign, out float pen, out Vector3 normal)
-    {
-        float hx = box.HalfExtents.X, hy = box.HalfExtents.Y, hz = box.HalfExtents.Z;
-        float magX = MathF.Abs(diff.X), magY = MathF.Abs(diff.Y), magZ = MathF.Abs(diff.Z);
-
-        int bestAxis = -1;
-        float bestSign = 0f;
-        float bestPen = 0f;
-        Vector3 bestNormal = Vector3.Zero;
-        float bestScore = -1f;
-        Eval(0, +1f, diff.X, magX, hx);
-        Eval(0, -1f, -diff.X, magX, hx);
-        Eval(1, +1f, diff.Y, magY, hy);
-        Eval(1, -1f, -diff.Y, magY, hy);
-        Eval(2, +1f, diff.Z, magZ, hz);
-        Eval(2, -1f, -diff.Z, magZ, hz);
-
-        void Eval(int a, float s, float along, float mag, float half)
-        {
-            if (mag <= half) return;                              // not beyond this face plane
-            float p = radius - (mag - half);                       // sphere penetration vs this face
-            if (p <= 0f) return;
-            float approach = -(s * (a == 0 ? vel.X : a == 1 ? vel.Y : vel.Z));
-            if (approach <= 0f) return;                            // moving away from / parallel to face
-            float score = approach * p;
-            if (score > bestScore)
-            {
-                bestScore = score;
-                bestAxis = a; bestSign = s; bestPen = p;
-                bestNormal = a == 0 ? new Vector3(s, 0f, 0f) : a == 1 ? new Vector3(0f, s, 0f) : new Vector3(0f, 0f, s);
-            }
-        }
-
-        axis = bestAxis; sign = (int)bestSign; pen = bestPen; normal = bestNormal;
-        return bestAxis >= 0;
     }
 
     public void ApplyExternalForce(Vector3 force, float dt)

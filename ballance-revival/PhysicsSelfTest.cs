@@ -49,6 +49,9 @@ public static class PhysicsSelfTest
         TestLightBallBouncesOffBox();
         TestWoodBallPushesBox();
         TestBoxesSeparateWhenPushed();
+        TestBoxChainAgainstWall();
+        TestBallDoesNotClimbCrateFromSide();
+        TestStackedBoxes();
         if (gameRoot != null) TestRealLevels(gameRoot);
 
         Console.WriteLine($"\n{"═",-47}");
@@ -409,6 +412,85 @@ public static class PhysicsSelfTest
 
         Assert(bounced, "Light ball bounced back after hitting the box");
         Assert(box.Position.X - startX < 3f, $"Ball barely moved the box ({box.Position.X - startX:F2} units)");
+    }
+
+    // ── Test: Two crates pushed against a wall never overlap or clip into the wall ──
+    private static void TestBoxChainAgainstWall()
+    {
+        Console.WriteLine("\n── Box chain pushed against wall (OBB SAT) ──");
+        var collider = new TriangleMeshCollider(16f);
+        AddFloorQuad(collider, -100, 100, -100, 100);
+        // Vertical wall at X = 20 facing -X
+        collider.AddTriangle(new CollisionTriangle(new(20, 0, -50), new(20, 0, 50), new(20, 10, 50)));
+        collider.AddTriangle(new CollisionTriangle(new(20, 0, -50), new(20, 10, 50), new(20, 10, -50)));
+
+        var boxA = new MovableBox(new Vector3(6f, 2.5f, 0f));
+        var boxB = new MovableBox(new Vector3(13f, 2.5f, 0f));
+        var boxes = new List<MovableBox> { boxA, boxB };
+        var ball = new BallPlayer(new Vector3(-4f, 2f, 0f), BallMaterial.Stone);
+        float dt = 1f / 60f;
+        Vector2 drive = new Vector2(1f, 0f);
+
+        for (int i = 0; i < 240; i++)
+        {
+            ball.Update(dt, drive, Vector3.UnitZ, Vector3.UnitX, collider, boxes);
+            MovableBox.StepAll(boxes, dt, collider);
+            ball.ResolvePostBoxStep(boxes, collider, dt);
+        }
+
+        // Box B must stop flush against the wall at X = 20 - 2.5 = 17.5 (no clipping!)
+        Assert(boxB.Position.X <= 17.5f + 0.12f, $"Box B stops at wall (X={boxB.Position.X:F2} ≤ 17.5)");
+        // Box A must stop flush behind Box B (gap ≥ 5.0, no overlap!)
+        float boxGap = boxB.Position.X - boxA.Position.X;
+        Assert(boxGap >= 5.0f - 0.12f, $"Boxes do not overlap (center gap={boxGap:F2} ≥ 5.0)");
+        // Ball stays behind Box A and on the floor (never climbs on top!)
+        Assert(ball.Position.X <= boxA.Position.X - 4.5f + 0.15f, $"Ball stays outside Box A (ball X={ball.Position.X:F2}, boxA left={boxA.Position.X - 4.5f:F2})");
+        Assert(ball.Position.Y <= 2.3f, $"Ball stays on floor, never climbs crate (Y={ball.Position.Y:F2})");
+    }
+
+    // ── Test: Fast wood ball hitting crate side never climbs onto top or gets sucked in ──
+    private static void TestBallDoesNotClimbCrateFromSide()
+    {
+        Console.WriteLine("\n── Wood ball pushing crate never climbs onto top ──");
+        var collider = new TriangleMeshCollider(16f);
+        AddFloorQuad(collider, -100, 100, -100, 100);
+
+        var box = new MovableBox(new Vector3(10f, 2.5f, 0f));
+        var boxes = new List<MovableBox> { box };
+        var ball = new BallPlayer(new Vector3(-10f, 2f, 0f), BallMaterial.Wood);
+        float dt = 1f / 60f;
+        Vector2 drive = new Vector2(1f, 0f);
+
+        float maxBallY = 0f;
+        for (int i = 0; i < 240; i++)
+        {
+            ball.Update(dt, drive, Vector3.UnitZ, Vector3.UnitX, collider, boxes);
+            MovableBox.StepAll(boxes, dt, collider);
+            ball.ResolvePostBoxStep(boxes, collider, dt);
+            maxBallY = MathF.Max(maxBallY, ball.Position.Y);
+        }
+
+        Assert(maxBallY <= 2.35f, $"Ball never popped onto crate (maxY={maxBallY:F2} ≤ 2.35)");
+        Assert(box.Position.X > 12f, $"Crate was pushed smoothly (X={box.Position.X:F2})");
+    }
+
+    // ── Test: Stacked crates rest cleanly on top of each other ──
+    private static void TestStackedBoxes()
+    {
+        Console.WriteLine("\n── Stacked crates ──");
+        var collider = new TriangleMeshCollider(16f);
+        AddFloorQuad(collider, -100, 100, -100, 100);
+
+        var bottom = new MovableBox(new Vector3(0f, 2.5f, 0f));
+        var top = new MovableBox(new Vector3(0f, 8.5f, 0f));
+        var boxes = new List<MovableBox> { bottom, top };
+        float dt = 1f / 60f;
+
+        for (int i = 0; i < 180; i++)
+            MovableBox.StepAll(boxes, dt, collider);
+
+        AssertNear(bottom.Position.Y, 2.5f, 0.1f, "Bottom crate rests on floor");
+        AssertNear(top.Position.Y, 7.5f, 0.15f, "Top crate rests cleanly on bottom crate");
     }
 
     // ── Integration: real level data ────────────────────────────────
