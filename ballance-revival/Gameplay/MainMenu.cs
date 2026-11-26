@@ -1,4 +1,5 @@
 using System.Numerics;
+using BallanceRevival.Core;
 using BallanceRevival.Rendering;
 using Raylib_cs;
 
@@ -43,7 +44,10 @@ public sealed class MainMenu : IDisposable
     private static readonly Rectangle SrcBackButton = new(0.2392f * 256f, 0.7529f * 256f, (0.8666f - 0.2392f) * 256f, (0.9843f - 0.7529f) * 256f);
     private static readonly Rectangle SrcYesNoButton = new(0f, 0.8235f * 256f, 0.226f * 256f, (0.9098f - 0.8235f) * 256f);
 
-    private enum ButtonStyle { Main, Level, Back, YesNo }
+    private enum ButtonStyle { Main, Level, Back, YesNo, Setting }
+
+    private readonly GraphicsSettings _settings;
+    private MenuPage _optionsReturnPage = MenuPage.Main;
 
     private readonly Sound _click;
     private readonly bool _hasClick;
@@ -60,7 +64,9 @@ public sealed class MainMenu : IDisposable
 
     public MenuPage Page { get; private set; } = MenuPage.Main;
     public int ChosenLevel { get; private set; } = 1;
-    public bool CoversGame => Page is MenuPage.Pause or MenuPage.ConfirmLeave;
+    public bool CoversGame =>
+        Page is MenuPage.Pause or MenuPage.ConfirmLeave
+        || (Page == MenuPage.Options && _optionsReturnPage == MenuPage.Pause);
 
     private static readonly string[] Credits =
     [
@@ -111,8 +117,9 @@ public sealed class MainMenu : IDisposable
         "special thanks to Panda!"
     ];
 
-    public MainMenu(string texturesDir, string soundsDir)
+    public MainMenu(string texturesDir, string soundsDir, GraphicsSettings settings)
     {
+        _settings = settings;
         _idle = LoadTex(Path.Combine(texturesDir, "Button01_deselect.tga"));
         _hot = LoadTex(Path.Combine(texturesDir, "Button01_select.tga"));
         _font = new GameFont(Path.Combine(texturesDir, "Font_1.tga"));
@@ -139,6 +146,12 @@ public sealed class MainMenu : IDisposable
         _index = 0;
         if (page == MenuPage.Credits) _creditsY = 180f;
         _laidOutW = 0;
+    }
+
+    public void ShowOptions(MenuPage returnPage)
+    {
+        _optionsReturnPage = returnPage;
+        Show(MenuPage.Options);
     }
 
     public void SetAmbient(bool on)
@@ -179,6 +192,22 @@ public sealed class MainMenu : IDisposable
         if (_columns > 1 && Raylib.IsKeyPressed(KeyboardKey.Left)) _index = (_index - 1 + n) % n;
         if (_columns > 1 && Raylib.IsKeyPressed(KeyboardKey.Right)) _index = (_index + 1) % n;
 
+        if (Page == MenuPage.Options && _index < 6)
+        {
+            if (Raylib.IsKeyPressed(KeyboardKey.Left) || Raylib.IsKeyPressed(KeyboardKey.A))
+            {
+                PlayClick();
+                AdjustOption(_index, -1);
+                return MenuCommand.None;
+            }
+            if (Raylib.IsKeyPressed(KeyboardKey.Right) || Raylib.IsKeyPressed(KeyboardKey.D))
+            {
+                PlayClick();
+                AdjustOption(_index, +1);
+                return MenuCommand.None;
+            }
+        }
+
         Vector2 mouse = Raylib.GetMousePosition();
         bool overItem = false;
         for (int i = 0; i < n; i++)
@@ -217,9 +246,11 @@ public sealed class MainMenu : IDisposable
 
         // Subtle center column backing (M_BlackScreen from Menu.nmo: [0.3..0.7] in 4:3)
         float refW = h * (4f / 3f);
-        float panelW = MathF.Min(w, refW * 0.44f);
+        float panelW = Page == MenuPage.Options
+            ? MathF.Min(w, refW * 0.56f)
+            : MathF.Min(w, refW * 0.44f);
         float panelX = (w - panelW) * 0.5f;
-        byte panelAlpha = CoversGame ? (byte)155 : (byte)85;
+        byte panelAlpha = CoversGame ? (byte)(Page == MenuPage.Options ? 135 : 155) : (byte)85;
         Raylib.DrawRectangle((int)panelX, 0, (int)panelW, h, new Color((byte)14, (byte)18, (byte)28, panelAlpha));
 
         if (!CoversGame)
@@ -243,10 +274,12 @@ public sealed class MainMenu : IDisposable
                 return MenuCommand.None;
             case MenuPage.Levels:
             case MenuPage.Highscore:
-            case MenuPage.Options:
             case MenuPage.Credits:
             case MenuPage.ConfirmQuit:
                 Show(MenuPage.Main);
+                return MenuCommand.None;
+            case MenuPage.Options:
+                Show(_optionsReturnPage);
                 return MenuCommand.None;
             case MenuPage.Pause:
                 return MenuCommand.Resume;
@@ -267,7 +300,10 @@ public sealed class MainMenu : IDisposable
                 {
                     case 0: Show(MenuPage.Levels); break;
                     case 1: Show(MenuPage.Highscore); break;
-                    case 2: Show(MenuPage.Options); break;
+                    case 2:
+                        _optionsReturnPage = MenuPage.Main;
+                        Show(MenuPage.Options);
+                        break;
                     case 3: Show(MenuPage.Credits); break;
                     case 4: Show(MenuPage.ConfirmQuit); break;
                 }
@@ -284,18 +320,30 @@ public sealed class MainMenu : IDisposable
                 return MenuCommand.None;
 
             case MenuPage.Highscore:
-            case MenuPage.Options:
             case MenuPage.Credits:
                 Show(MenuPage.Main);
                 return MenuCommand.None;
 
-            case MenuPage.Pause:
-                return _index switch
+            case MenuPage.Options:
+                if (_index < 7)
                 {
-                    0 => MenuCommand.Resume,
-                    1 => MenuCommand.RestartLevel,
-                    _ => OpenLeave()
-                };
+                    AdjustOption(_index, +1);
+                    return MenuCommand.None;
+                }
+                Show(_optionsReturnPage);
+                return MenuCommand.None;
+
+            case MenuPage.Pause:
+                switch (_index)
+                {
+                    case 0: return MenuCommand.Resume;
+                    case 1:
+                        _optionsReturnPage = MenuPage.Pause;
+                        Show(MenuPage.Options);
+                        return MenuCommand.None;
+                    case 2: return MenuCommand.RestartLevel;
+                    default: return OpenLeave();
+                }
 
             case MenuPage.ConfirmQuit:
                 if (_index == 0) return MenuCommand.Quit;
@@ -338,14 +386,17 @@ public sealed class MainMenu : IDisposable
                 LevelGrid(w, h, refW);
                 break;
             case MenuPage.Highscore:
-            case MenuPage.Options:
             case MenuPage.Credits:
                 _columns = 1;
                 Column(w, h, refW, ["Zur\u00fcck"], h * 0.84f, ButtonStyle.Back);
                 break;
+            case MenuPage.Options:
+                _columns = 1;
+                OptionsColumn(w, h);
+                break;
             case MenuPage.Pause:
                 _columns = 1;
-                Column(w, h, refW, ["Zur\u00fcck zum Spiel", "Level Neustart", "Level Beenden"], h * 0.30f, ButtonStyle.Main);
+                Column(w, h, refW, ["Zur\u00fcck zum Spiel", "Optionen", "Level Neustart", "Level Beenden"], h * 0.24f, ButtonStyle.Main);
                 break;
             case MenuPage.ConfirmQuit:
             case MenuPage.ConfirmLeave:
@@ -409,6 +460,54 @@ public sealed class MainMenu : IDisposable
         _items.Add(("Zur\u00fcck", new Rectangle((w - backW) / 2f, backY, backW, backH), ButtonStyle.Back));
     }
 
+    private void AdjustOption(int index, int dir)
+    {
+        switch (index)
+        {
+            case 0: _settings.ToggleAtmosphere(); break;
+            case 1: _settings.CycleBloom(dir); break;
+            case 2: _settings.CycleSnow(dir); break;
+            case 3: _settings.CycleGodRays(dir); break;
+            case 4: _settings.ToggleSsr(); break;
+            case 5: _settings.CycleDebugMode(dir); break;
+            case 6: _settings.ResetDefaults(); break;
+            default: return;
+        }
+        _settings.Save();
+        _laidOutW = 0; // Refresh option labels on next frame
+    }
+
+    private void OptionsColumn(int w, int h)
+    {
+        string[] labels =
+        [
+            $"Atmosphere: {_settings.AtmosphereLabel}",
+            $"HDR Bloom: {_settings.BloomLabel}",
+            $"Snow: {_settings.SnowLabel}",
+            $"God Rays: {_settings.GodRaysLabel}",
+            $"Metallic SSR: {_settings.SsrLabel}",
+            $"Debug View: {_settings.DebugModeLabel}",
+            "Reset Defaults"
+        ];
+
+        float bh = Math.Clamp(h * 0.060f, 34f, 48f);
+        float bw = MathF.Min(w * 0.56f, bh * 7.6f);
+        float gap = bh * 0.22f;
+        float x = (w - bw) * 0.5f;
+        float y = CoversGame ? h * 0.16f : h * 0.19f;
+
+        foreach (string label in labels)
+        {
+            _items.Add((label, new Rectangle(x, y, bw, bh), ButtonStyle.Setting));
+            y += bh + gap;
+        }
+
+        float backH = Math.Clamp(h * 0.085f, 44f, 66f);
+        float backW = backH * (SrcBackButton.Width / SrcBackButton.Height);
+        float backY = MathF.Min(h - backH - 36f, y + 10f);
+        _items.Add(("Zur\u00fcck", new Rectangle((w - backW) * 0.5f, backY, backW, backH), ButtonStyle.Back));
+    }
+
     private void DrawButton(Rectangle dest, string label, ButtonStyle style, bool hot)
     {
         Rectangle src = style switch
@@ -427,6 +526,7 @@ public sealed class MainMenu : IDisposable
         {
             ButtonStyle.Level => dest.Height * 0.56f,
             ButtonStyle.YesNo => dest.Height * 0.52f,
+            ButtonStyle.Setting => dest.Height * 0.48f,
             _ => dest.Height * 0.42f
         };
         // Offset text center past the left chrome sphere cap (except Yes/No pill which has no sphere)
@@ -435,6 +535,7 @@ public sealed class MainMenu : IDisposable
             ButtonStyle.YesNo => 0.50f,
             ButtonStyle.Back => 0.60f,
             ButtonStyle.Level => 0.55f,
+            ButtonStyle.Setting => 0.54f,
             _ => 0.56f
         };
         float textX = dest.X + dest.Width * textCenterFrac;
@@ -471,28 +572,11 @@ public sealed class MainMenu : IDisposable
 
     private void DrawOptions(int w, int h)
     {
-        string[] lines =
-        [
-            "Steuerung",
-            "",
-            "W A S D / Pfeile     Rolle",
-            "Q / E                Kamera drehen",
-            "Leertaste            Kamerawinkel",
-            "R                    Checkpoint",
-            "H                    Hilfe",
-            "Esc                  Pause"
-        ];
-        const float size = 22f;
-        float y = 160f;
-        foreach (string line in lines)
-        {
-            if (line.Length > 0)
-            {
-                var color = line == "Steuerung" ? Ink : new Color(210, 216, 222, 255);
-                _font.DrawCentered(line, w / 2f, y, size, color);
-            }
-            y += 36f;
-        }
+        float titleY = CoversGame ? h * 0.08f : h * 0.125f;
+        _font.DrawCentered("Graphics Options", w * 0.5f, titleY, 26f, Ink);
+
+        string hint = "Click / Left-Right to change   |   F1-F6 Hotkeys   |   Esc Back";
+        _font.DrawCentered(hint, w * 0.5f, h - 24f, 15f, new Color(200, 210, 224, 210));
     }
 
     private void DrawCredits(int w, int h)

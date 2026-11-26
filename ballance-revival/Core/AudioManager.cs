@@ -1,4 +1,5 @@
 using BallanceRevival.Gameplay;
+using BallanceRevival.Physics;
 using Raylib_cs;
 
 namespace BallanceRevival.Core;
@@ -45,13 +46,17 @@ public class AudioManager : IDisposable
         LoadSoundFile("hit_stone_metal", "Hit_Stone_Metal.wav");
         LoadSoundFile("hit_paper", "Hit_Paper.wav");
 
-        // Authentic looping roll sounds from Sounds/
-        LoadSoundFile("roll_wood", "Roll_Wood_Stone.wav");
-        LoadSoundFile("roll_stone", "Roll_Stone_Stone.wav");
+        // Authentic looping roll sounds from Sounds/ (surface-material aware)
+        LoadSoundFile("roll_wood_stone", "Roll_Wood_Stone.wav");
+        LoadSoundFile("roll_wood_wood", "Roll_Wood_Wood.wav");
+        LoadSoundFile("roll_wood_metal", "Roll_Wood_Metal.wav");
+        LoadSoundFile("roll_stone_stone", "Roll_Stone_Stone.wav");
+        LoadSoundFile("roll_stone_wood", "Roll_Stone_Wood.wav");
+        LoadSoundFile("roll_stone_metal", "Roll_Stone_Metal.wav");
         LoadSoundFile("roll_paper", "Roll_Paper.wav");
 
-        _rollWood = GetSound("roll_wood");
-        _rollStone = GetSound("roll_stone");
+        _rollWood = GetSound("roll_wood_stone");
+        _rollStone = GetSound("roll_stone_stone");
         _rollPaper = GetSound("roll_paper");
     }
 
@@ -111,14 +116,28 @@ public class AudioManager : IDisposable
         return _sounds.TryGetValue(key, out var s) ? s : default;
     }
 
-    public void PlayRollSound(BallMaterial material, float speed, bool isGrounded)
+    public void PlayRollSound(BallMaterial material, float speed, bool isGrounded, SurfaceKind surface = SurfaceKind.Stone)
     {
-        Sound rollSound = material switch
+        string key = (material, surface) switch
         {
-            BallMaterial.Stone => _rollStone,
-            BallMaterial.Paper => _rollPaper,
-            _ => _rollWood
+            (BallMaterial.Paper, _) => "roll_paper",
+            (BallMaterial.Stone, SurfaceKind.Wood) => "roll_stone_wood",
+            (BallMaterial.Stone, SurfaceKind.Metal) => "roll_stone_metal",
+            (BallMaterial.Stone, _) => "roll_stone_stone",
+            (_, SurfaceKind.Wood) => "roll_wood_wood",
+            (_, SurfaceKind.Metal) => "roll_wood_metal",
+            _ => "roll_wood_stone"
         };
+        Sound rollSound = GetSound(key);
+        if (!Raylib.IsSoundValid(rollSound))
+        {
+            rollSound = material switch
+            {
+                BallMaterial.Stone => _rollStone,
+                BallMaterial.Paper => _rollPaper,
+                _ => _rollWood
+            };
+        }
 
         if (!Raylib.IsSoundValid(rollSound)) return;
 
@@ -151,14 +170,18 @@ public class AudioManager : IDisposable
         }
     }
 
-    public void PlayImpact(BallMaterial material, float impactSpeed)
+    public void PlayImpact(BallMaterial material, float impactSpeed, SurfaceKind surface = SurfaceKind.Stone)
     {
         if (impactSpeed < 2.5f) return;
 
-        string soundKey = material switch
+        string soundKey = (material, surface) switch
         {
-            BallMaterial.Stone => "hit_stone_stone",
-            BallMaterial.Paper => "hit_paper",
+            (BallMaterial.Paper, _) => "hit_paper",
+            (BallMaterial.Stone, SurfaceKind.Wood) => "hit_stone_wood",
+            (BallMaterial.Stone, SurfaceKind.Metal) => "hit_stone_metal",
+            (BallMaterial.Stone, _) => "hit_stone_stone",
+            (_, SurfaceKind.Wood) => "hit_wood_wood",
+            (_, SurfaceKind.Metal) => "hit_wood_metal",
             _ => "hit_wood_stone"
         };
 

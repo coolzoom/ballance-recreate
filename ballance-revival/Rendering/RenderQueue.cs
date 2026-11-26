@@ -28,6 +28,11 @@ public static class RenderQueue
 
     public static int DrawnMeshes { get; private set; }
     public static int CulledMeshes { get; private set; }
+    public static Matrix4x4 ViewMatrix { get; private set; } = Matrix4x4.Identity;
+    public static Matrix4x4 ProjectionMatrix { get; private set; } = Matrix4x4.Identity;
+    public static Matrix4x4 ViewProjectionMatrix { get; private set; } = Matrix4x4.Identity;
+    public static Matrix4x4 InvViewProjectionMatrix { get; private set; } = Matrix4x4.Identity;
+    public static Vector3 ViewPosition => _viewPos;
 
     public static void BeginFrame(Camera3D camera, float aspect)
     {
@@ -39,6 +44,11 @@ public static class RenderQueue
         Matrix4x4 view = Matrix4x4.CreateLookAt(camera.Position, camera.Target, camera.Up);
         Matrix4x4 proj = Matrix4x4.CreatePerspectiveFieldOfView(camera.FovY * (MathF.PI / 180f), aspect, NearPlane, FarPlane);
         Matrix4x4 m = view * proj;
+
+        ViewMatrix = view;
+        ProjectionMatrix = proj;
+        ViewProjectionMatrix = m;
+        InvViewProjectionMatrix = Matrix4x4.Invert(m, out Matrix4x4 inv) ? inv : Matrix4x4.Identity;
 
         // Gribb-Hartmann plane extraction for row-vector matrices (clip = v * M)
         _planes[0] = new Vector4(m.M14 + m.M11, m.M24 + m.M21, m.M34 + m.M31, m.M44 + m.M41);

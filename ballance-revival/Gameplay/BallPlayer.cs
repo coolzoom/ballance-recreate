@@ -15,6 +15,7 @@ public class BallPlayer
 
     public bool IsGrounded { get; private set; }
     public Vector3 LastContactNormal { get; private set; } = Vector3.UnitY;
+    public SurfaceKind LastSurface { get; private set; } = SurfaceKind.Stone;
     public float LastImpactSpeed { get; private set; }
 
     // Gameplay.nmo "Set Physics Globals": gravity (0, -20, 0), physics time factor 2.
@@ -132,11 +133,12 @@ public class BallPlayer
         Position += Velocity * dt;
 
         // Collision detection and resolution
-        if (collider.CollideSphere(Position, Properties.Radius, out Vector3 correction, out Vector3 normal, out bool grounded))
+        if (collider.CollideSphere(Position, Properties.Radius, out Vector3 correction, out Vector3 normal, out bool grounded, out SurfaceKind surface))
         {
             Position += correction;
             IsGrounded = grounded;
             LastContactNormal = normal;
+            LastSurface = surface;
 
             // Velocity resolution against contact normal
             float normalVel = Vector3.Dot(Velocity, normal);
@@ -365,5 +367,25 @@ public class BallPlayer
     public void ApplyExternalForce(Vector3 force, float dt)
     {
         Velocity += (force / Properties.Mass) * dt;
+    }
+
+    public void ApplyDynamicSurfaceContact(Vector3 normal, float dt, SurfaceKind surface = SurfaceKind.Wood)
+    {
+        if (normal.Y > 0.4f)
+        {
+            IsGrounded = true;
+            LastContactNormal = normal;
+            LastSurface = surface;
+
+            Vector3 tVel = Velocity - normal * Vector3.Dot(Velocity, normal);
+            float tSpeed = tVel.Length();
+            if (tSpeed > 1e-4f)
+            {
+                float drop = MathF.Min(tSpeed, Properties.RollingResistance * dt);
+                Velocity -= tVel * (drop / tSpeed);
+            }
+            Vector3 targetAngVel = Vector3.Cross(normal, Velocity) / Properties.Radius;
+            AngularVelocity = Vector3.Lerp(AngularVelocity, targetAngVel, 18.0f * dt);
+        }
     }
 }

@@ -3,6 +3,13 @@ using BallanceRevival.Nmo;
 
 namespace BallanceRevival.Physics;
 
+public enum SurfaceKind : byte
+{
+    Stone = 0,
+    Wood = 1,
+    Metal = 2
+}
+
 public struct CollisionTriangle
 {
     public Vector3 A;
@@ -11,12 +18,14 @@ public struct CollisionTriangle
     public Vector3 Normal;
     public Vector3 Min;
     public Vector3 Max;
+    public SurfaceKind Surface;
 
-    public CollisionTriangle(Vector3 a, Vector3 b, Vector3 c)
+    public CollisionTriangle(Vector3 a, Vector3 b, Vector3 c, SurfaceKind surface = SurfaceKind.Stone)
     {
         A = a;
         B = b;
         C = c;
+        Surface = surface;
 
         Vector3 cross = Vector3.Cross(b - a, c - a);
         Normal = cross.LengthSquared() > 1e-8f ? Vector3.Normalize(cross) : Vector3.UnitY;
@@ -90,13 +99,13 @@ public class TriangleMeshCollider
     public int TriangleCount => _triangles.Count;
     public IReadOnlyList<CollisionTriangle> Triangles => _triangles;
 
-    public void AddEntity(NmoEntity entity)
+    public void AddEntity(NmoEntity entity, SurfaceKind surface = SurfaceKind.Stone)
     {
         if (entity.Mesh == null) return;
-        AddMesh(entity.Mesh, entity.WorldMatrix);
+        AddMesh(entity.Mesh, entity.WorldMatrix, surface);
     }
 
-    public void AddMesh(NmoMesh mesh, Matrix4x4 matrix)
+    public void AddMesh(NmoMesh mesh, Matrix4x4 matrix, SurfaceKind surface = SurfaceKind.Stone)
     {
         // Transform vertices to world space
         var worldPositions = new Vector3[mesh.Positions.Length];
@@ -114,7 +123,8 @@ public class TriangleMeshCollider
                 AddTriangle(new CollisionTriangle(
                     worldPositions[face.V0],
                     worldPositions[face.V1],
-                    worldPositions[face.V2]
+                    worldPositions[face.V2],
+                    surface
                 ));
             }
         }
@@ -163,10 +173,14 @@ public class TriangleMeshCollider
     }
 
     public bool CollideSphere(Vector3 center, float radius, out Vector3 penetrationCorrection, out Vector3 contactNormal, out bool isGrounded)
+        => CollideSphere(center, radius, out penetrationCorrection, out contactNormal, out isGrounded, out _);
+
+    public bool CollideSphere(Vector3 center, float radius, out Vector3 penetrationCorrection, out Vector3 contactNormal, out bool isGrounded, out SurfaceKind hitSurface)
     {
         penetrationCorrection = Vector3.Zero;
         contactNormal = Vector3.Zero;
         isGrounded = false;
+        hitSurface = SurfaceKind.Stone;
 
         // Iterative depenetration: resolve the deepest penetration first, then re-check (#1)
         const int maxIterations = 4;
@@ -244,6 +258,7 @@ public class TriangleMeshCollider
                                     {
                                         deepestPenetration = depth;
                                         deepestNormal = normal;
+                                        hitSurface = tri.Surface;
                                     }
 
                                     // Accumulate contact normal for average direction

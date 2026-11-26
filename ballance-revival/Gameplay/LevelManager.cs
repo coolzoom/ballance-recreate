@@ -73,6 +73,8 @@ public class LevelManager
     public List<MovableBox> Boxes { get; } = [];
     public List<PuzzleBall> PuzzleBalls { get; } = [];
     public List<WindFan> WindFans { get; } = [];
+    public List<SeesawModule> Seesaws { get; } = [];
+    public List<SwingingSandbag> Sandbags { get; } = [];
     private float _scoreDecayAccum;
     private float _windParticleAccum;
 
@@ -170,19 +172,30 @@ public class LevelManager
         Collider = new TriangleMeshCollider(8.0f);
         float minY = float.MaxValue;
 
+        // Build surface-material lookup from Sound_RollID_01 (stone), 02 (wood), 03 (metal)
+        var woodSurfaces = new HashSet<NmoEntity>();
+        var metalSurfaces = new HashSet<NmoEntity>();
+        if (CurrentLevel.Groups.TryGetValue("Sound_RollID_02", out var woodGrp)) woodSurfaces.UnionWith(woodGrp);
+        if (CurrentLevel.Groups.TryGetValue("Sound_RollID_03", out var metalGrp)) metalSurfaces.UnionWith(metalGrp);
+
         foreach (var floor in CurrentLevel.FloorColliders)
         {
-            Collider.AddEntity(floor);
+            SurfaceKind surf = metalSurfaces.Contains(floor)
+                ? SurfaceKind.Metal
+                : (woodSurfaces.Contains(floor) || floor.Name.Contains("Wood", StringComparison.OrdinalIgnoreCase))
+                    ? SurfaceKind.Wood
+                    : SurfaceKind.Stone;
+            Collider.AddEntity(floor, surf);
             if (floor.Position.Y < minY) minY = floor.Position.Y;
         }
         foreach (var rail in CurrentLevel.RailColliders)
         {
-            Collider.AddEntity(rail);
+            Collider.AddEntity(rail, SurfaceKind.Metal);
             if (rail.Position.Y < minY) minY = rail.Position.Y;
         }
 
-        // Add walkable/solid prefab modules (bridges, seesaws, ramps, gates, dome, goal platform)
-        // to the static triangle collider so the ball never falls through P_Modul_* structures.
+        // Add walkable/solid prefab modules (bridges, ramps, gates, dome, goal platform)
+        // to the static triangle collider; dynamic modules (18, 26, 30, 34) simulate separately.
         foreach (var (entity, group) in CurrentLevel.Placeholders)
         {
             bool isWalkableModule = group.StartsWith("P_Modul_", StringComparison.OrdinalIgnoreCase)
@@ -190,10 +203,15 @@ public class LevelManager
                 || group.Equals("PE_Levelende", StringComparison.OrdinalIgnoreCase);
             if (!isWalkableModule
                 || group.Equals("P_Modul_18", StringComparison.OrdinalIgnoreCase)
+                || group.Equals("P_Modul_26", StringComparison.OrdinalIgnoreCase)
+                || group.Equals("P_Modul_30", StringComparison.OrdinalIgnoreCase)
                 || group.Equals("P_Modul_34", StringComparison.OrdinalIgnoreCase)) continue;
 
             var prefab = Prefabs.Get(PrefabKey(entity.Name));
             if (prefab == null) continue;
+            SurfaceKind modSurf = group is "P_Modul_25" or "P_Modul_29" or "P_Modul_37" or "P_Modul_08" or "P_Modul_19"
+                ? SurfaceKind.Wood
+                : SurfaceKind.Stone;
             foreach (var part in prefab.Parts)
             {
                 if (part.Mesh == null) continue;
@@ -204,7 +222,7 @@ public class LevelManager
                     pn.Contains("Seil", StringComparison.OrdinalIgnoreCase) ||
                     pn.Contains("Rope", StringComparison.OrdinalIgnoreCase))
                     continue;
-                Collider.AddMesh(part.Mesh, part.WorldMatrix * entity.WorldMatrix);
+                Collider.AddMesh(part.Mesh, part.WorldMatrix * entity.WorldMatrix, modSurf);
             }
             if (entity.Position.Y < minY) minY = entity.Position.Y;
         }
@@ -252,6 +270,8 @@ public class LevelManager
         Boxes.Clear();
         PuzzleBalls.Clear();
         WindFans.Clear();
+        Seesaws.Clear();
+        Sandbags.Clear();
 
         if (CurrentLevel == null) return;
 
@@ -348,6 +368,20 @@ public class LevelManager
             foreach (var fan in fans)
                 WindFans.Add(new WindFan(fan.Position, fan));
         }
+
+        // 8. Dynamic Seesaws (P_Modul_30 — 17 instances across Levels 2-12)
+        if (CurrentLevel.Groups.TryGetValue("P_Modul_30", out var seesaws))
+        {
+            foreach (var s in seesaws)
+                Seesaws.Add(new SeesawModule(s.WorldMatrix, s));
+        }
+
+        // 9. Swinging Sandbags (P_Modul_26 — 18 instances across Levels 8-12)
+        if (CurrentLevel.Groups.TryGetValue("P_Modul_26", out var sandbags))
+        {
+            for (int i = 0; i < sandbags.Count; i++)
+                Sandbags.Add(new SwingingSandbag(sandbags[i].WorldMatrix, i * 1.15f, sandbags[i]));
+        }
     }
 
     /// <summary>Every flame grate in the level; checkpoints must already be built.</summary>
@@ -426,15 +460,15 @@ public class LevelManager
             return;
         }
 
-        // Play impact sound
+        // Play surface-aware impact sound
         if (Player.LastImpactSpeed > 2.0f)
         {
-            _audioManager.PlayImpact(Player.CurrentMaterial, Player.LastImpactSpeed);
+            _audioManager.PlayImpact(Player.CurrentMaterial, Player.LastImpactSpeed, Player.LastSurface);
             _particles.EmitBurst(Player.Position - Player.LastContactNormal * Player.Properties.Radius, Color.LightGray, 6, 4.0f, 0.2f);
         }
 
-        // Rolling sound
-        _audioManager.PlayRollSound(Player.CurrentMaterial, Player.Velocity.Length(), Player.IsGrounded);
+        // Surface-aware looping rolling sound
+        _audioManager.PlayRollSound(Player.CurrentMaterial, Player.Velocity.Length(), Player.IsGrounded, Player.LastSurface);
 
         // Update Checkpoints
         foreach (var cp in Checkpoints)
@@ -516,6 +550,12 @@ public class LevelManager
                 }
             }
         }
+
+        // Update Dynamic Seesaws (P_Modul_30) and Swinging Sandbags (P_Modul_26)
+        foreach (var seesaw in Seesaws)
+            seesaw.Update(dt, Player);
+        foreach (var bag in Sandbags)
+            bag.Update(totalTime, Player);
 
         // Check goal (PE_Balloon UFO platform)
         if (!IsLevelComplete)
@@ -691,7 +731,8 @@ public class LevelManager
             }
 
             bool dynamic = group is "P_Extra_Point" or "P_Extra_Life" or "P_Box"
-                or "P_Ball_Wood" or "P_Ball_Stone" or "P_Ball_Paper" or "P_Modul_18" or "P_Modul_34";
+                or "P_Ball_Wood" or "P_Ball_Stone" or "P_Ball_Paper"
+                or "P_Modul_18" or "P_Modul_26" or "P_Modul_30" or "P_Modul_34";
             var prefab = Prefabs.Get(PrefabKey(entity.Name));
             // Level copies of empty prefabs are untextured editor markers (reset arrows, flame volumes)
             if (prefab == null || prefab.Parts.Count == 0) continue;
@@ -780,6 +821,37 @@ public class LevelManager
                 float rad = fan.SpinAngle * (MathF.PI / 180f);
                 Matrix4x4 world = Matrix4x4.CreateRotationY(rad) * fan.Entity.WorldMatrix;
                 fanPrefab.Draw(world);
+            }
+        }
+
+        // Draw dynamic seesaws (P_Modul_30)
+        var seesawPrefab = Prefabs.Get("P_Modul_30");
+        if (seesawPrefab != null)
+        {
+            foreach (var seesaw in Seesaws)
+            {
+                foreach (var part in seesawPrefab.Parts)
+                    if (part.Mesh != null)
+                        seesawPrefab.Renderer.DrawMesh(part.Mesh, seesaw.GetTiltedWorld(part.WorldMatrix));
+            }
+        }
+
+        // Draw swinging sandbags (P_Modul_26)
+        var bagPrefab = Prefabs.Get("P_Modul_26");
+        if (bagPrefab != null)
+        {
+            foreach (var bag in Sandbags)
+            {
+                Matrix4x4 swingWorld = bag.GetSwingMatrix();
+                foreach (var part in bagPrefab.Parts)
+                {
+                    if (part.Mesh == null) continue;
+                    // Ceiling bracket stays fixed; rope and sandbag swing together
+                    Matrix4x4 w = part.Name.Contains("Halter", StringComparison.OrdinalIgnoreCase)
+                        ? part.WorldMatrix * bag.BaseWorld
+                        : part.WorldMatrix * swingWorld;
+                    bagPrefab.Renderer.DrawMesh(part.Mesh, w);
+                }
             }
         }
 

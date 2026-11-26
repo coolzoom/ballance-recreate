@@ -49,9 +49,12 @@ public class SkyboxRenderer : IDisposable
         return tex;
     }
 
-    public void Draw(Vector3 c)
+    public void Draw(Vector3 c, float moodyNight = 0f)
     {
         const float s = 400.0f;
+        byte r = (byte)(255 - moodyNight * 175f);
+        byte g = (byte)(255 - moodyNight * 165f);
+        byte b = (byte)(255 - moodyNight * 125f);
 
         // rlgl applies depth/cull state when the batch is flushed, so flush around the sky
         Rlgl.DrawRenderBatchActive();
@@ -60,28 +63,28 @@ public class SkyboxRenderer : IDisposable
 
         // Corners are bottom-left, bottom-right, top-right, top-left as seen from inside the box.
         // Virtools' +Z (front) maps to -Z after the left-to-right-handed mirror.
-        DrawQuad(_front, c, new(-s, -s, -s), new(s, -s, -s), new(s, s, -s), new(-s, s, -s));
-        DrawQuad(_back, c, new(s, -s, s), new(-s, -s, s), new(-s, s, s), new(s, s, s));
-        DrawQuad(_left, c, new(-s, -s, s), new(-s, -s, -s), new(-s, s, -s), new(-s, s, s));
-        DrawQuad(_right, c, new(s, -s, -s), new(s, -s, s), new(s, s, s), new(s, s, -s));
-        DrawQuad(_down, c, new(-s, -s, s), new(s, -s, s), new(s, -s, -s), new(-s, -s, -s));
+        DrawQuad(_front, c, new(-s, -s, -s), new(s, -s, -s), new(s, s, -s), new(-s, s, -s), r, g, b);
+        DrawQuad(_back, c, new(s, -s, s), new(-s, -s, s), new(-s, s, s), new(s, s, s), r, g, b);
+        DrawQuad(_left, c, new(-s, -s, s), new(-s, -s, -s), new(-s, s, -s), new(-s, s, s), r, g, b);
+        DrawQuad(_right, c, new(s, -s, -s), new(s, -s, s), new(s, s, s), new(s, s, -s), r, g, b);
+        DrawQuad(_down, c, new(-s, -s, s), new(s, -s, s), new(s, -s, -s), new(-s, -s, -s), r, g, b);
 
         // No top texture ships with the game: stretch the front image's top row over the lid
-        DrawQuad(_front, c, new(-s, s, -s), new(s, s, -s), new(s, s, s), new(-s, s, s), topRowOnly: true);
+        DrawQuad(_front, c, new(-s, s, -s), new(s, s, -s), new(s, s, s), new(-s, s, s), r, g, b, topRowOnly: true);
 
         Rlgl.DrawRenderBatchActive();
         Rlgl.EnableBackfaceCulling();
         Rlgl.EnableDepthMask();
     }
 
-    private static void DrawQuad(Texture2D tex, Vector3 c, Vector3 bl, Vector3 br, Vector3 tr, Vector3 tl, bool topRowOnly = false)
+    private static void DrawQuad(Texture2D tex, Vector3 c, Vector3 bl, Vector3 br, Vector3 tr, Vector3 tl, byte r, byte g, byte b, bool topRowOnly = false)
     {
         float vTop = 0.002f;
         float vBottom = topRowOnly ? vTop : 0.998f;
 
         Rlgl.SetTexture(tex.Id);
         Rlgl.Begin(DrawMode.Quads);
-        Rlgl.Color4ub(255, 255, 255, 255);
+        Rlgl.Color4ub(r, g, b, 255);
         Rlgl.TexCoord2f(0f, vBottom); Rlgl.Vertex3f(c.X + bl.X, c.Y + bl.Y, c.Z + bl.Z);
         Rlgl.TexCoord2f(1f, vBottom); Rlgl.Vertex3f(c.X + br.X, c.Y + br.Y, c.Z + br.Z);
         Rlgl.TexCoord2f(1f, vTop); Rlgl.Vertex3f(c.X + tr.X, c.Y + tr.Y, c.Z + tr.Z);

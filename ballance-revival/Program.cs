@@ -36,7 +36,40 @@ public static class Program
         string? shot = args.Length > 1 && args[0] == "--shot" ? Path.GetFullPath(args[1]) : null;
         int startLevel = args.Length > 2 && int.TryParse(args[2], out int lv) ? Math.Clamp(lv, 0, 12) : 1;
         Gameplay.BallMaterial? startMat = args.Length > 3 && Enum.TryParse<Gameplay.BallMaterial>(args[3], true, out var mat) ? mat : null;
-        using var engine = new GameEngine(gameRoot, 1280, 720) { ScreenshotPath = shot, StartLevel = startLevel, StartMaterial = startMat };
+        Rendering.PostProcessDebugMode? debugMode = null;
+        float? mood = null, snow = null, godRays = null;
+        bool? ssr = null;
+        bool startInOptions = false;
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (args[i] == "--options")
+                startInOptions = true;
+            else if (i + 1 < args.Length)
+            {
+                if (args[i] == "--debug" && int.TryParse(args[i + 1], out int dm))
+                    debugMode = (Rendering.PostProcessDebugMode)Math.Clamp(dm, 0, 4);
+                else if (args[i] == "--mood" && float.TryParse(args[i + 1], out float m))
+                    mood = Math.Clamp(m, 0f, 1f);
+                else if (args[i] == "--snow" && float.TryParse(args[i + 1], out float sn))
+                    snow = Math.Clamp(sn, 0f, 1f);
+                else if (args[i] == "--godrays" && float.TryParse(args[i + 1], out float gr))
+                    godRays = Math.Clamp(gr, 0f, 1.5f);
+                else if (args[i] == "--ssr" && int.TryParse(args[i + 1], out int s))
+                    ssr = s != 0;
+            }
+        }
+        using var engine = new GameEngine(gameRoot, 1280, 720)
+        {
+            ScreenshotPath = shot,
+            StartLevel = startLevel,
+            StartMaterial = startMat,
+            InitialDebugMode = debugMode,
+            InitialMood = mood,
+            InitialSnow = snow,
+            InitialGodRays = godRays,
+            InitialSsr = ssr,
+            StartInOptions = startInOptions
+        };
         engine.Run();
     }
 

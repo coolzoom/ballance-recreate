@@ -55,6 +55,7 @@ public static class PhysicsSelfTest
         TestPuzzleBallsFallAndCollide();
         TestWindFanLiftsPaperBall();
         TestModul34SlidingStoneDropsWhenCratePushed();
+        TestSeesawTiltsUnderBallWeight();
         if (gameRoot != null) TestRealLevels(gameRoot);
 
         Console.WriteLine($"\n{"═",-47}");
@@ -592,6 +593,26 @@ public static class PhysicsSelfTest
         Assert(kiste.Position.X > 14f, $"Kiste was pushed out (X={kiste.Position.X:F2})");
         AssertNear(stone.Position.X, 8f, 0.05f, "Sliding stone stayed locked horizontally");
         AssertNear(stone.Position.Y, 2.5f, 0.15f, $"Sliding stone dropped cleanly onto floor (Y={stone.Position.Y:F2})");
+    }
+
+    // ── Test: P_Modul_30 seesaw tilts toward the side carrying the ball ──
+    private static void TestSeesawTiltsUnderBallWeight()
+    {
+        Console.WriteLine("\n── Seesaw (P_Modul_30) tilts under ball weight ──");
+        var collider = new TriangleMeshCollider(16f);
+        var seesaw = new SeesawModule(Matrix4x4.Identity);
+        // Deck rests around Y = 4.56 - 1.85 = 2.71; place Wood ball on the +X side (X = +2.5)
+        var ball = new BallPlayer(new Vector3(2.5f, 5.2f, 0f), BallMaterial.Wood);
+        float dt = 1f / 60f;
+
+        for (int i = 0; i < 30; i++)
+        {
+            ball.Update(dt, Vector2.Zero, Vector3.UnitZ, Vector3.UnitX, collider);
+            seesaw.Update(dt, ball);
+        }
+
+        Assert(seesaw.Angle < -0.04f, $"Seesaw tilted down on +X side (angle={seesaw.Angle:F3} rad)");
+        Assert(ball.IsGrounded, "Ball stays grounded on the tilted seesaw deck");
     }
 
     // ── Integration: real level data ────────────────────────────────

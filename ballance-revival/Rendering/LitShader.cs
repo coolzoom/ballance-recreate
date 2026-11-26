@@ -49,10 +49,33 @@ public static class LitShader
         uniform vec3 sunDir;
         uniform vec4 ballPos;        // xyz, radius
         uniform vec4 surface;        // x: specStrength, y: specPower, z: receivesBallShadow, w: >0.5 sphere env-map / <-0.5 self-lit
+        uniform float atmosphereMood;// 0.0 = Classic Vivid, 1.0 = Moody / Night High-Contrast
+        uniform float snowIntensity; // 0.0 ~ 1.0 Dynamic Y-Up Snow Accumulation (Stage 2)
         uniform int lightCount;
         uniform vec4 lightPos[MAX_LIGHTS];   // xyz, radius
         uniform vec3 lightColor[MAX_LIGHTS];
-        out vec4 finalColor;
+        layout(location = 0) out vec4 finalColor;
+        layout(location = 1) out vec4 materialData; // MRT G-Buffer: r=SSR reflectMask, g=roughness, b=snowMask, a=1
+
+        // Lightweight procedural 2D hash & value noise for organic snow edges & ice crystal glints
+        float hash21(vec2 p)
+        {
+            p = fract(p * vec2(123.34, 456.21));
+            p += dot(p, p + 45.32);
+            return fract(p.x * p.y);
+        }
+
+        float valueNoise(vec2 p)
+        {
+            vec2 i = floor(p);
+            vec2 f = fract(p);
+            f = f * f * (3.0 - 2.0 * f);
+            float a = hash21(i);
+            float b = hash21(i + vec2(1.0, 0.0));
+            float c = hash21(i + vec2(0.0, 1.0));
+            float d = hash21(i + vec2(1.0, 1.0));
+            return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+        }
 
         float ballShadow()
         {
@@ -111,38 +134,68 @@ public static class LitShader
             float ndl = dot(n, sunDir);
             bool isBall = surface.z < 0.5 && surface.x > 0.0 && !isEnvMap && !isEmissive;
 
+            // Stage 2: Dynamic Y-Up Snow Accumulation (excludes player ball, emissive lanterns, and alpha decals)
+            float snowMask = 0.0;
+            if (snowIntensity > 0.001 && !isBall && !isEmissive && texel.a > 0.92)
+            {
+                float upDot = dot(n, vec3(0.0, 1.0, 0.0));
+                float nCoarse = valueNoise(fragWorld.xz * 0.16);
+                float nFine = valueNoise(fragWorld.xz * 0.65);
+                float edgeNoise = (nCoarse * 0.65 + nFine * 0.35) - 0.5;
+                // Surface faces upward when dot(n, +Y) > 0.6 with organic noisy transition
+                snowMask = smoothstep(0.56 + edgeNoise * 0.16, 0.78 + edgeNoise * 0.10, upDot) * snowIntensity;
+                // Chrome metal rails only catch light frost so they stay recognizably metallic
+                if (isEnvMap) snowMask *= 0.30;
+
+                vec3 snowAlbedo = vec3(0.90, 0.93, 0.98);
+                texel.rgb = mix(texel.rgb, snowAlbedo, snowMask);
+            }
+
             vec3 light;
+            float ambScale = mix(1.0, 0.26, atmosphereMood);
+            vec3 moodyTint = mix(vec3(1.0), vec3(0.72, 0.80, 1.12), atmosphereMood);
+            float sunScale = mix(1.0, 0.52, atmosphereMood);
+            float ptScale = mix(1.15, 2.25, atmosphereMood);
+
             if (isEmissive)
             {
-                // Self-illuminated lantern glass
-                light = vec3(1.15, 1.12, 1.05);
+                // True HDR self-illuminated lantern glass & energy glows (> 1.0 triggers Bloom)
+                light = vec3(1.95, 1.82, 1.55);
             }
             else if (isBall)
             {
                 // Hero ball lighting: neutral-warm directional shading with deep shadowed underside
-                vec3 ballAmbient = mix(vec3(0.16, 0.16, 0.18), mix(vec3(0.54), skyTint * 0.52, 0.35), n.y * 0.5 + 0.5);
+                vec3 ballAmbient = mix(vec3(0.16, 0.16, 0.18), mix(vec3(0.54), skyTint * 0.52, 0.35), n.y * 0.5 + 0.5) * ambScale * moodyTint;
                 float ballWrap = clamp((ndl + 0.12) / 1.12, 0.0, 1.0);
-                light = ballAmbient + mix(vec3(1.0, 0.98, 0.94), sunTint, 0.25) * (0.76 * ballWrap);
+                light = ballAmbient + mix(vec3(1.0, 0.98, 0.94), sunTint, 0.25) * (0.76 * sunScale * ballWrap);
             }
             else if (isEnvMap)
             {
                 // Metallic chrome surfaces keep bright sky/sun reflection contrast
-                vec3 envAmbient = mix(groundTint * 0.55, skyTint * 0.92, n.y * 0.5 + 0.5) * 0.78;
+                vec3 envAmbient = mix(groundTint * 0.55, skyTint * 0.92, n.y * 0.5 + 0.5) * 0.78 * ambScale * moodyTint;
                 float envWrap = clamp((ndl + 0.25) / 1.25, 0.0, 1.0);
-                light = envAmbient * (1.0 - 0.35 * shadow) + sunTint * (0.55 * envWrap) * (1.0 - shadow);
+                light = envAmbient * (1.0 - 0.35 * shadow) + sunTint * (0.55 * sunScale * envWrap) * (1.0 - shadow);
             }
             else
             {
-                vec3 ambient = mix(groundTint * 0.72, skyTint, n.y * 0.5 + 0.5) * 0.62;
+                vec3 ambient = mix(groundTint * 0.72, skyTint, n.y * 0.5 + 0.5) * 0.62 * ambScale * moodyTint;
                 float wrapped = clamp((ndl + 0.3) / 1.3, 0.0, 1.0);
-                light = ambient * (1.0 - 0.45 * shadow) + sunTint * (0.50 * wrapped) * (1.0 - shadow);
+                light = ambient * (1.0 - 0.45 * shadow) + sunTint * (0.50 * sunScale * wrapped) * (1.0 - shadow);
             }
 
             vec3 spec = vec3(0.0);
             if (surface.x > 0.0 && ndl > 0.0 && !isEmissive)
             {
                 vec3 h = normalize(sunDir + v);
-                spec = sunTint * surface.x * pow(max(dot(n, h), 0.0), surface.y) * (1.0 - shadow);
+                spec = sunTint * surface.x * (isEnvMap ? 1.45 : 1.0) * pow(max(dot(n, h), 0.0), surface.y) * (1.0 - shadow);
+            }
+            // Ice crystal micro-glint + cool Fresnel sheen on snow-covered surfaces
+            if (snowMask > 0.05 && ndl > 0.0)
+            {
+                vec3 h = normalize(sunDir + v);
+                float sparkle = pow(hash21(floor(fragWorld.xz * 6.5)), 16.0);
+                float iceSpec = pow(max(dot(n, h), 0.0), 32.0) * (0.14 + sparkle * 0.75);
+                spec += vec3(0.85, 0.93, 1.0) * iceSpec * snowMask * (1.0 - shadow);
             }
 
             for (int i = 0; i < MAX_LIGHTS; i++)
@@ -154,21 +207,26 @@ public static class LitShader
                 if (att <= 0.0) continue;
                 att *= att;
                 float lambert = max(dot(n, l / ld), 0.0) * 0.75 + 0.25;
-                float lightScale = isBall ? 0.35 : 1.0;
+                float lightScale = (isBall ? 0.42 : 1.0) * ptScale;
                 light += lightColor[i] * att * lambert * lightScale;
             }
 
-            // Subtle Fresnel rim on lit edges (stronger metallic sheen on env-mapped chrome)
+            // Subtle Fresnel rim on lit edges (stronger metallic sheen on env-mapped chrome & icy snow)
+            // Keep true HDR dynamic range (> 1.0) without legacy softClip; ACES Tone Mapping runs in RenderPipeline.
             float fresnel = pow(1.0 - max(dot(n, v), 0.0), isEnvMap ? 2.4 : 3.2) * clamp(ndl * 0.5 + 0.5, 0.0, 1.0);
-            vec3 rimColor = mix(skyTint, sunTint, max(dot(n, sunDir), 0.0));
-            float rimStrength = isEnvMap ? 0.28 : (isBall ? 0.05 : 0.08);
+            vec3 rimColor = mix(mix(skyTint, sunTint, max(dot(n, sunDir), 0.0)), vec3(0.85, 0.94, 1.0), snowMask * 0.7);
+            float rimStrength = isEnvMap ? 0.28 : (isBall ? 0.05 : mix(0.08, 0.22, snowMask));
             vec3 color = texel.rgb * light + spec + rimColor * fresnel * rimStrength;
-            color = softClip(color);
 
             float fog = 1.0 - exp(-fogDensity * dist);
             float hf = clamp((fogHeight.x - fragWorld.y) / fogHeight.y, 0.0, 1.0);
             fog = 1.0 - (1.0 - fog) * (1.0 - hf * hf * 0.9);
             finalColor = vec4(mix(color, fogColor, clamp(fog, 0.0, 0.9)), texel.a);
+
+            // MRT location 1: SSR reflection mask & roughness for Stage 4B metallic reflections
+            float reflectMask = isEnvMap ? (1.0 - snowMask * 0.6) : (isBall ? 0.0 : clamp(surface.x * 0.45, 0.0, 0.35) * (1.0 - snowMask));
+            float roughness = isEnvMap ? 0.12 : clamp(1.0 - surface.y / 96.0, 0.25, 0.95);
+            materialData = vec4(reflectMask, roughness, snowMask, 1.0);
         }
         """;
 
@@ -176,7 +234,8 @@ public static class LitShader
 
     private static int _viewPosLoc, _fogColorLoc, _fogDensityLoc, _fogHeightLoc;
     private static int _skyTintLoc, _groundTintLoc, _sunTintLoc, _sunDirLoc;
-    private static int _ballPosLoc, _surfaceLoc, _lightCountLoc, _lightPosLoc, _lightColorLoc;
+    public static readonly Vector3 SunDir = Vector3.Normalize(new Vector3(-0.35f, 0.9f, -0.25f));
+    private static int _ballPosLoc, _surfaceLoc, _moodLoc, _snowLoc, _lightCountLoc, _lightPosLoc, _lightColorLoc;
     private static Vector4 _surface = new(-1f);
 
     public static readonly Vector4 DefaultSurface = new(0.08f, 24f, 1f, 0f);
@@ -195,16 +254,32 @@ public static class LitShader
         _sunDirLoc = Raylib.GetShaderLocation(Shader, "sunDir");
         _ballPosLoc = Raylib.GetShaderLocation(Shader, "ballPos");
         _surfaceLoc = Raylib.GetShaderLocation(Shader, "surface");
+        _moodLoc = Raylib.GetShaderLocation(Shader, "atmosphereMood");
+        _snowLoc = Raylib.GetShaderLocation(Shader, "snowIntensity");
         _lightCountLoc = Raylib.GetShaderLocation(Shader, "lightCount");
         _lightPosLoc = Raylib.GetShaderLocation(Shader, "lightPos");
         _lightColorLoc = Raylib.GetShaderLocation(Shader, "lightColor");
 
-        Raylib.SetShaderValue(Shader, _sunDirLoc, Vector3.Normalize(new Vector3(-0.35f, 0.9f, -0.25f)), ShaderUniformDataType.Vec3);
+        Raylib.SetShaderValue(Shader, _sunDirLoc, SunDir, ShaderUniformDataType.Vec3);
         SetEnvironment(Vector3.One, Vector3.One, Vector3.One);
         SetFogHeight(-1e6f, 1f);
         SetBall(Vector3.Zero, 0f);
         SetLights([], [], 0);
         SetSurface(DefaultSurface);
+        SetAtmosphereMood(0f);
+        SetSnowIntensity(0f);
+    }
+
+    public static void SetAtmosphereMood(float mood)
+    {
+        if (Shader.Id == 0) return;
+        Raylib.SetShaderValue(Shader, _moodLoc, Math.Clamp(mood, 0f, 1f), ShaderUniformDataType.Float);
+    }
+
+    public static void SetSnowIntensity(float intensity)
+    {
+        if (Shader.Id == 0) return;
+        Raylib.SetShaderValue(Shader, _snowLoc, Math.Clamp(intensity, 0f, 1f), ShaderUniformDataType.Float);
     }
 
     public static void SetFog(Vector3 viewPos, Vector3 fogColor, float density)

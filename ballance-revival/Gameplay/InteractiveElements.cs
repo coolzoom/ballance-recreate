@@ -670,3 +670,145 @@ public class WindFan
         return true;
     }
 }
+
+/// <summary>
+/// P_Modul_30 seesaw (Wippe): tilts smoothly around its local Z hinge axis under the
+/// player ball's weight and provides live tilted-OBB deck collision so the ball rolls across it.
+/// </summary>
+public class SeesawModule
+{
+    public Vector3 PivotWorld { get; }
+    public Matrix4x4 BaseWorld { get; }
+    public float Angle { get; private set; } // radians, clamped to ±MaxAngle
+    public float AngularVelocity { get; private set; }
+    public NmoEntity? Entity { get; }
+
+    private const float MaxAngle = 0.28f; // ~16 degrees
+    // P_Modul_30_Col1_Mesh deck bounds: x [-7.4..7.4], y [-2.1..-1.6], z [-2.6..2.4]
+    private static readonly Vector3 DeckLocalCenter = new(0f, -1.85f, -0.1f);
+    private static readonly Vector3 DeckHalfExtents = new(7.4f, 0.30f, 2.5f);
+
+    public SeesawModule(Matrix4x4 entityWorld, NmoEntity? entity = null)
+    {
+        Entity = entity;
+        BaseWorld = entityWorld;
+        // Pivot sits at P_Modul_30_Wippe local origin (0, 4.56, 0) in prefab space
+        PivotWorld = Vector3.Transform(new Vector3(-0.35f, 4.56f, 0.15f), entityWorld);
+    }
+
+    public Matrix4x4 GetTiltedWorld(Matrix4x4 partWorld)
+    {
+        // Rotate part around its local Z hinge axis
+        return Matrix4x4.CreateRotationZ(Angle) * partWorld * BaseWorld;
+    }
+
+    public void Update(float dt, BallPlayer ball)
+    {
+        // Build tilted deck OBB frame from BaseWorld + Angle around local Z
+        Matrix4x4 tiltWorld = Matrix4x4.CreateRotationZ(Angle)
+            * Matrix4x4.CreateTranslation(-0.35f, 4.56f, 0.15f)
+            * BaseWorld;
+
+        Vector3 deckCenter = Vector3.Transform(DeckLocalCenter, tiltWorld);
+        Vector3 ax = Vector3.Normalize(Vector3.TransformNormal(Vector3.UnitX, tiltWorld));
+        Vector3 ay = Vector3.Normalize(Vector3.TransformNormal(Vector3.UnitY, tiltWorld));
+        Vector3 az = Vector3.Normalize(Vector3.TransformNormal(Vector3.UnitZ, tiltWorld));
+
+        // Sphere vs tilted deck OBB
+        Vector3 rel = ball.Position - deckCenter;
+        Vector3 localBall = new(Vector3.Dot(rel, ax), Vector3.Dot(rel, ay), Vector3.Dot(rel, az));
+        Vector3 clamped = Vector3.Clamp(localBall, -DeckHalfExtents, DeckHalfExtents);
+        Vector3 localDiff = localBall - clamped;
+        float distSq = localDiff.LengthSquared();
+        float r = ball.Properties.Radius;
+
+        float torque = 0f;
+        float snapR = r + 0.08f;
+        if (distSq < snapR * snapR)
+        {
+            float dist = MathF.Sqrt(distSq);
+            Vector3 localNormal = distSq > 1e-8f
+                ? localDiff / dist
+                : new Vector3(0f, localBall.Y >= 0f ? 1f : -1f, 0f);
+            Vector3 worldNormal = Vector3.Normalize(ax * localNormal.X + ay * localNormal.Y + az * localNormal.Z);
+
+            if (dist < r)
+            {
+                ball.Position += worldNormal * (r - dist);
+                float vn = Vector3.Dot(ball.Velocity, worldNormal);
+                if (vn < 0f) ball.Velocity -= worldNormal * vn;
+            }
+
+            if (worldNormal.Y > 0.4f && Vector3.Dot(ball.Velocity, worldNormal) <= 0.5f)
+            {
+                ball.ApplyDynamicSurfaceContact(worldNormal, dt, Physics.SurfaceKind.Wood);
+                // Torque proportional to lever arm along deck X and ball mass
+                torque = -localBall.X * MathF.Min(ball.Properties.Mass, 6.0f) * 0.22f;
+            }
+        }
+
+        // Gentle spring damping + tilt integration
+        AngularVelocity += (torque - Angle * 1.4f - AngularVelocity * 3.8f) * dt;
+        Angle += AngularVelocity * dt;
+        if (Angle > MaxAngle) { Angle = MaxAngle; if (AngularVelocity > 0f) AngularVelocity = 0f; }
+        if (Angle < -MaxAngle) { Angle = -MaxAngle; if (AngularVelocity < 0f) AngularVelocity = 0f; }
+    }
+}
+
+/// <summary>
+/// P_Modul_26 swinging sandbag obstacle: swings smoothly around its top ceiling pivot
+/// and knocks the player ball sideways on contact.
+/// </summary>
+public class SwingingSandbag
+{
+    public Matrix4x4 BaseWorld { get; }
+    public float Phase { get; }
+    public float SwingAngle { get; private set; }
+    public NmoEntity? Entity { get; }
+
+    private const float PivotY = 14.96f;
+    private const float SackY = 0.52f;
+    private const float SackRadius = 2.0f;
+
+    public SwingingSandbag(Matrix4x4 entityWorld, float phase, NmoEntity? entity = null)
+    {
+        BaseWorld = entityWorld;
+        Phase = phase;
+        Entity = entity;
+    }
+
+    public Matrix4x4 GetSwingMatrix()
+    {
+        return Matrix4x4.CreateTranslation(0f, -PivotY, 0f)
+            * Matrix4x4.CreateRotationZ(SwingAngle)
+            * Matrix4x4.CreateTranslation(0f, PivotY, 0f)
+            * BaseWorld;
+    }
+
+    public void Update(float totalTime, BallPlayer ball)
+    {
+        float prevAngle = SwingAngle;
+        SwingAngle = MathF.Sin(totalTime * 1.85f + Phase) * 0.46f; // ±26° pendulum swing
+
+        Matrix4x4 swingWorld = GetSwingMatrix();
+        Vector3 sackPos = Vector3.Transform(new Vector3(0f, SackY, 0f), swingWorld);
+
+        Vector3 diff = ball.Position - sackPos;
+        float minDist = ball.Properties.Radius + SackRadius;
+        float distSq = diff.LengthSquared();
+        if (distSq < minDist * minDist && distSq > 1e-6f)
+        {
+            float dist = MathF.Sqrt(distSq);
+            Vector3 n = diff / dist;
+            ball.Position += n * (minDist - dist);
+
+            float vn = Vector3.Dot(ball.Velocity, n);
+            if (vn < 0f) ball.Velocity -= n * (vn * 1.4f);
+
+            // Impart pendulum swing velocity impulse
+            float swingSpeed = (SwingAngle - prevAngle) * 60f * (PivotY - SackY);
+            Vector3 tangent = Vector3.Normalize(Vector3.TransformNormal(Vector3.UnitX, BaseWorld));
+            ball.Velocity += tangent * Math.Clamp(swingSpeed * 0.45f, -14f, 14f);
+        }
+    }
+}
