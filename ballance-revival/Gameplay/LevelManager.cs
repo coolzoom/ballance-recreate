@@ -72,6 +72,9 @@ public class LevelManager
     public List<TransformerTrigger> Transformers { get; } = [];
     public List<MovableBox> Boxes { get; } = [];
     public List<PuzzleBall> PuzzleBalls { get; } = [];
+    public List<WindFan> WindFans { get; } = [];
+    private float _scoreDecayAccum;
+    private float _windParticleAccum;
 
     public bool IsLevelComplete { get; private set; }
     public float LevelCompleteTimer { get; private set; } = 0f;
@@ -178,6 +181,35 @@ public class LevelManager
             if (rail.Position.Y < minY) minY = rail.Position.Y;
         }
 
+        // Add walkable/solid prefab modules (bridges, seesaws, ramps, gates, dome, goal platform)
+        // to the static triangle collider so the ball never falls through P_Modul_* structures.
+        foreach (var (entity, group) in CurrentLevel.Placeholders)
+        {
+            bool isWalkableModule = group.StartsWith("P_Modul_", StringComparison.OrdinalIgnoreCase)
+                || group.Equals("P_Dome", StringComparison.OrdinalIgnoreCase)
+                || group.Equals("PE_Levelende", StringComparison.OrdinalIgnoreCase);
+            if (!isWalkableModule || group.Equals("P_Modul_18", StringComparison.OrdinalIgnoreCase)) continue;
+
+            var prefab = Prefabs.Get(PrefabKey(entity.Name));
+            if (prefab == null) continue;
+            foreach (var part in prefab.Parts)
+            {
+                if (part.Mesh == null) continue;
+                string pn = part.Name;
+                if (pn.Contains("Shadow", StringComparison.OrdinalIgnoreCase) ||
+                    pn.Contains("Flash", StringComparison.OrdinalIgnoreCase) ||
+                    pn.Contains("Ballon", StringComparison.OrdinalIgnoreCase) ||
+                    pn.Contains("Seil", StringComparison.OrdinalIgnoreCase) ||
+                    pn.Contains("Rope", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                Collider.AddMesh(part.Mesh, part.WorldMatrix * entity.WorldMatrix);
+            }
+            if (entity.Position.Y < minY) minY = entity.Position.Y;
+        }
+
+        _scoreDecayAccum = 0f;
+        _windParticleAccum = 0f;
+
         FloorMinY = minY == float.MaxValue ? 0f : minY;
         KillY = minY - 30.0f;
 
@@ -217,6 +249,7 @@ public class LevelManager
         Transformers.Clear();
         Boxes.Clear();
         PuzzleBalls.Clear();
+        WindFans.Clear();
 
         if (CurrentLevel == null) return;
 
@@ -266,6 +299,13 @@ public class LevelManager
                     ? BallMaterial.Stone
                     : BallMaterial.Wood;
             PuzzleBalls.Add(new PuzzleBall(mat, pb.Position, pb));
+        }
+
+        // 7. Wind Fans (P_Modul_18 — 113 instances across Levels 2-12)
+        if (CurrentLevel.Groups.TryGetValue("P_Modul_18", out var fans))
+        {
+            foreach (var fan in fans)
+                WindFans.Add(new WindFan(fan.Position, fan));
         }
     }
 
@@ -327,10 +367,15 @@ public class LevelManager
 
     public void Update(float dt, float totalTime)
     {
-        // Score decay (1 point every 1.5 seconds)
-        if (Score > 0 && !IsLevelComplete)
+        // Score decay: 1 point per second using a float accumulator (fixes 60fps integer truncation to 0)
+        if (Score > 0 && !IsLevelComplete && !IsTransforming)
         {
-            Score = Math.Max(0, Score - (int)(dt * 0.7f));
+            _scoreDecayAccum += dt;
+            while (_scoreDecayAccum >= 1.0f && Score > 0)
+            {
+                _scoreDecayAccum -= 1.0f;
+                Score--;
+            }
         }
 
         // Check fall death
@@ -410,6 +455,26 @@ public class LevelManager
         MovableBox.StepAll(Boxes, dt, Collider);
         PuzzleBall.StepAll(PuzzleBalls, Player, Boxes, dt, Collider);
         Player.ResolvePostBoxStep(Boxes, Collider, dt);
+
+        // Update Wind Fans (P_Modul_18): spin rotors & lift Paper Ball in the updraft
+        if (WindFans.Count > 0)
+        {
+            _windParticleAccum += dt;
+            bool emitWind = _windParticleAccum >= 0.14f;
+            if (emitWind) _windParticleAccum = 0f;
+
+            foreach (var fan in WindFans)
+            {
+                fan.Update(dt, Player, PuzzleBalls);
+                if (emitWind && Vector3.DistanceSquared(fan.Position, Player.Position) < 90f * 90f)
+                {
+                    _particles.EmitBurst(
+                        fan.Position + fan.UpDirection * 1.2f,
+                        new Color((byte)215, (byte)235, (byte)255, (byte)130),
+                        1, 2.0f, 0.22f, 0.9f);
+                }
+            }
+        }
 
         // Check goal (PE_Balloon UFO platform)
         if (!IsLevelComplete)
@@ -585,7 +650,7 @@ public class LevelManager
             }
 
             bool dynamic = group is "P_Extra_Point" or "P_Extra_Life" or "P_Box"
-                or "P_Ball_Wood" or "P_Ball_Stone" or "P_Ball_Paper";
+                or "P_Ball_Wood" or "P_Ball_Stone" or "P_Ball_Paper" or "P_Modul_18";
             var prefab = Prefabs.Get(PrefabKey(entity.Name));
             // Level copies of empty prefabs are untextured editor markers (reset arrows, flame volumes)
             if (prefab == null || prefab.Parts.Count == 0) continue;
@@ -650,6 +715,19 @@ public class LevelManager
             Matrix4x4 world = Matrix4x4.CreateFromQuaternion(pb.Rotation) *
                               Matrix4x4.CreateTranslation(pb.Position);
             Prefabs.Get(pb.PrefabKey)?.Draw(world);
+        }
+
+        // Spin P_Modul_18 fan rotors
+        var fanPrefab = Prefabs.Get("P_Modul_18");
+        if (fanPrefab != null)
+        {
+            foreach (var fan in WindFans)
+            {
+                if (fan.Entity == null) continue;
+                float rad = fan.SpinAngle * (MathF.PI / 180f);
+                Matrix4x4 world = Matrix4x4.CreateRotationY(rad) * fan.Entity.WorldMatrix;
+                fanPrefab.Draw(world);
+            }
         }
 
         DrawPlayerBall();

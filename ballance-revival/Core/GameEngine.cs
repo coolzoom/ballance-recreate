@@ -141,12 +141,14 @@ public class GameEngine : IDisposable
 
         if (!_playing)
         {
+            _audioManager?.StopLevelMusic();
             _menu.SetAmbient(!_menu.CoversGame);
             ApplyMenu(_menu.Update(dt));
             return;
         }
 
         _menu.SetAmbient(false);
+        _audioManager?.UpdateLevelMusic(_levelManager.CurrentLevelNumber);
 
         bool isShift = Raylib.IsKeyDown(KeyboardKey.LeftShift) || Raylib.IsKeyDown(KeyboardKey.RightShift);
 
@@ -306,14 +308,21 @@ public class GameEngine : IDisposable
     {
         if (_skybox == null) return;
 
+        // Exact skybox mapping from original Levelinit.nmo AllLevel table
         string theme = levelNum switch
         {
-            1 or 2 => "Sky_A",
-            3 or 4 => "Sky_B",
-            5 or 6 => "Sky_C",
-            7 or 8 => "Sky_D",
-            9 or 10 => "Sky_E",
-            _ => "Sky_F"
+            1 => "Sky_L",
+            2 => "Sky_E",
+            3 => "Sky_A",
+            4 => "Sky_F",
+            5 => "Sky_C",
+            6 => "Sky_H",
+            7 => "Sky_D",
+            8 => "Sky_G",
+            9 => "Sky_K",
+            10 => "Sky_B",
+            11 => "Sky_J",
+            _ => "Sky_I"
         };
         _skybox.SetTheme(theme);
     }

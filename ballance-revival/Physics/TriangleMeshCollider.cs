@@ -93,9 +93,11 @@ public class TriangleMeshCollider
     public void AddEntity(NmoEntity entity)
     {
         if (entity.Mesh == null) return;
-        var mesh = entity.Mesh;
-        var matrix = entity.WorldMatrix;
+        AddMesh(entity.Mesh, entity.WorldMatrix);
+    }
 
+    public void AddMesh(NmoMesh mesh, Matrix4x4 matrix)
+    {
         // Transform vertices to world space
         var worldPositions = new Vector3[mesh.Positions.Length];
         for (int i = 0; i < mesh.Positions.Length; i++)

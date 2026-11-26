@@ -53,6 +53,7 @@ public static class PhysicsSelfTest
         TestBallDoesNotClimbCrateFromSide();
         TestStackedBoxes();
         TestPuzzleBallsFallAndCollide();
+        TestWindFanLiftsPaperBall();
         if (gameRoot != null) TestRealLevels(gameRoot);
 
         Console.WriteLine($"\n{"═",-47}");
@@ -526,6 +527,30 @@ public static class PhysicsSelfTest
         Assert(p1.Position.X > 10f, $"Wood ball pushed paper ball 1 (X={p1.Position.X:F2})");
         Assert(p2.Position.X > p2StartX + 2f, $"Paper ball 1 knocked paper ball 2 (X={p2.Position.X:F2})");
         Assert(Vector3.Distance(p1.Position, p2.Position) >= 3.85f, "Paper balls do not overlap");
+    }
+
+    // ── Test: P_Modul_18 wind fan lifts Paper Ball but NOT Wood Ball ──
+    private static void TestWindFanLiftsPaperBall()
+    {
+        Console.WriteLine("\n── WindFan (P_Modul_18) lifts Paper Ball ──");
+        var collider = new TriangleMeshCollider(16f);
+        AddFloorQuad(collider, -100, 100, -100, 100);
+
+        var fan = new WindFan(new Vector3(0f, 0f, 0f));
+        var paper = new BallPlayer(new Vector3(0.5f, 2f, 0f), BallMaterial.Paper);
+        var wood = new BallPlayer(new Vector3(0.5f, 2f, 0f), BallMaterial.Wood);
+        float dt = 1f / 60f;
+
+        for (int i = 0; i < 120; i++)
+        {
+            fan.Update(dt, paper);
+            paper.Update(dt, Vector2.Zero, Vector3.UnitZ, Vector3.UnitX, collider);
+            fan.Update(dt, wood);
+            wood.Update(dt, Vector2.Zero, Vector3.UnitZ, Vector3.UnitX, collider);
+        }
+
+        Assert(paper.Position.Y > 12f, $"Paper ball lifted high by wind fan (Y={paper.Position.Y:F2})");
+        AssertNear(wood.Position.Y, 2.0f, 0.2f, $"Wood ball stays grounded over fan (Y={wood.Position.Y:F2})");
     }
 
     // ── Integration: real level data ────────────────────────────────

@@ -14,6 +14,10 @@ public class AudioManager : IDisposable
     private bool _isRollingPlaying = false;
     private Sound _currentActiveRollSound;
 
+    private Music _levelMusic;
+    private bool _hasLevelMusic;
+    private int _musicTheme = -1;
+
     public AudioManager(string soundDirectory)
     {
         _soundDirectory = soundDirectory;
@@ -41,9 +45,52 @@ public class AudioManager : IDisposable
         LoadSoundFile("hit_stone_metal", "Hit_Stone_Metal.wav");
         LoadSoundFile("hit_paper", "Hit_Paper.wav");
 
-        _rollWood = GetSound("hit_wood_wood");
-        _rollStone = GetSound("hit_stone_stone");
-        _rollPaper = GetSound("hit_paper");
+        // Authentic looping roll sounds from Sounds/
+        LoadSoundFile("roll_wood", "Roll_Wood_Stone.wav");
+        LoadSoundFile("roll_stone", "Roll_Stone_Stone.wav");
+        LoadSoundFile("roll_paper", "Roll_Paper.wav");
+
+        _rollWood = GetSound("roll_wood");
+        _rollStone = GetSound("roll_stone");
+        _rollPaper = GetSound("roll_paper");
+    }
+
+    public void UpdateLevelMusic(int levelNum)
+    {
+        int theme = ((Math.Max(levelNum, 1) - 1) % 5) + 1;
+        if (theme != _musicTheme)
+        {
+            StopLevelMusic();
+            string path = Path.Combine(_soundDirectory, $"Music_Theme_{theme}_1.wav");
+            if (File.Exists(path))
+            {
+                _levelMusic = Raylib.LoadMusicStream(path);
+                _hasLevelMusic = Raylib.IsMusicValid(_levelMusic);
+                if (_hasLevelMusic)
+                {
+                    Raylib.SetMusicVolume(_levelMusic, 0.38f);
+                    Raylib.PlayMusicStream(_levelMusic);
+                    _musicTheme = theme;
+                }
+            }
+        }
+        else if (_hasLevelMusic)
+        {
+            if (!Raylib.IsMusicStreamPlaying(_levelMusic))
+                Raylib.PlayMusicStream(_levelMusic);
+            Raylib.UpdateMusicStream(_levelMusic);
+        }
+    }
+
+    public void StopLevelMusic()
+    {
+        if (_hasLevelMusic)
+        {
+            Raylib.StopMusicStream(_levelMusic);
+            Raylib.UnloadMusicStream(_levelMusic);
+            _hasLevelMusic = false;
+        }
+        _musicTheme = -1;
     }
 
     private void LoadSoundFile(string key, string fileName)
@@ -83,9 +130,9 @@ public class AudioManager : IDisposable
             Raylib.SetSoundVolume(rollSound, vol);
             Raylib.SetSoundPitch(rollSound, pitch);
 
-            if (!_isRollingPlaying || _currentActiveRollSound.Stream.Buffer != rollSound.Stream.Buffer)
+            if (!_isRollingPlaying || _currentActiveRollSound.Stream.Buffer != rollSound.Stream.Buffer || !Raylib.IsSoundPlaying(rollSound))
             {
-                if (_isRollingPlaying && Raylib.IsSoundValid(_currentActiveRollSound))
+                if (_isRollingPlaying && _currentActiveRollSound.Stream.Buffer != rollSound.Stream.Buffer && Raylib.IsSoundValid(_currentActiveRollSound))
                 {
                     Raylib.StopSound(_currentActiveRollSound);
                 }
@@ -143,6 +190,7 @@ public class AudioManager : IDisposable
 
     public void Dispose()
     {
+        StopLevelMusic();
         foreach (var sound in _sounds.Values)
         {
             if (Raylib.IsSoundValid(sound))

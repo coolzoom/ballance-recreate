@@ -546,3 +546,85 @@ public class PuzzleBall
         }
     }
 }
+
+/// <summary>
+/// P_Modul_18 wind fan: spins its rotor blades and creates an upward aerodynamic
+/// air column that lifts the Paper Ball (CanBeLiftedByWind) to elevated track sections.
+/// </summary>
+public class WindFan
+{
+    public Vector3 Position { get; }
+    public Vector3 UpDirection { get; }
+    public float Radius { get; } = 4.4f;
+    public float Height { get; } = 28.0f;
+    public float SpinAngle { get; private set; }
+    public NmoEntity? Entity { get; }
+
+    public WindFan(Vector3 position, NmoEntity? entity = null)
+    {
+        Position = position;
+        Entity = entity;
+        if (entity != null)
+        {
+            var up = Vector3.TransformNormal(Vector3.UnitY, entity.WorldMatrix);
+            UpDirection = up.LengthSquared() > 1e-4f ? Vector3.Normalize(up) : Vector3.UnitY;
+        }
+        else
+        {
+            UpDirection = Vector3.UnitY;
+        }
+    }
+
+    public bool Update(float dt, BallPlayer player, IReadOnlyList<PuzzleBall>? puzzleBalls = null)
+    {
+        SpinAngle = (SpinAngle + 540f * dt) % 360f;
+        bool liftedPlayer = false;
+
+        if (player.Properties.CanBeLiftedByWind)
+        {
+            liftedPlayer = TryApplyLift(player.Position, player.Velocity, out Vector3 accel, dt);
+            if (liftedPlayer)
+            {
+                player.Velocity += accel * dt;
+            }
+        }
+
+        if (puzzleBalls != null)
+        {
+            for (int i = 0; i < puzzleBalls.Count; i++)
+            {
+                var pb = puzzleBalls[i];
+                if (pb.Material == BallMaterial.Paper && TryApplyLift(pb.Position, pb.Velocity, out Vector3 accel, dt))
+                {
+                    pb.Velocity += accel * dt;
+                }
+            }
+        }
+
+        return liftedPlayer;
+    }
+
+    private bool TryApplyLift(Vector3 pos, Vector3 vel, out Vector3 accel, float dt)
+    {
+        accel = Vector3.Zero;
+        Vector3 rel = pos - Position;
+        float along = Vector3.Dot(rel, UpDirection);
+        if (along < -1.5f || along > Height) return false;
+
+        Vector3 radial = rel - UpDirection * along;
+        float radialDist = radial.Length();
+        if (radialDist > Radius) return false;
+
+        // Smooth updraft that overcomes Gravity (-40) and gently caps upward climb speed
+        float falloff = 1f - 0.35f * (radialDist / Radius);
+        float heightFactor = Math.Clamp(1f - (along / Height) * 0.45f, 0.4f, 1f);
+        float targetUpSpeed = 16.0f * falloff * heightFactor;
+        float currentUpSpeed = Vector3.Dot(vel, UpDirection);
+        float liftAccel = Math.Clamp((targetUpSpeed - currentUpSpeed) * 4.5f, 0f, 68f) + (-BallPlayer.Gravity);
+
+        // Gentle centering breeze pulls paper ball toward the air stream axis
+        Vector3 centerPull = radialDist > 0.25f ? -(radial / radialDist) * (2.5f * (radialDist / Radius)) : Vector3.Zero;
+        accel = UpDirection * liftAccel + centerPull;
+        return true;
+    }
+}
