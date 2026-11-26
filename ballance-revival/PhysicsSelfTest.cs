@@ -52,6 +52,7 @@ public static class PhysicsSelfTest
         TestBoxChainAgainstWall();
         TestBallDoesNotClimbCrateFromSide();
         TestStackedBoxes();
+        TestPuzzleBallsFallAndCollide();
         if (gameRoot != null) TestRealLevels(gameRoot);
 
         Console.WriteLine($"\n{"═",-47}");
@@ -491,6 +492,40 @@ public static class PhysicsSelfTest
 
         AssertNear(bottom.Position.Y, 2.5f, 0.1f, "Bottom crate rests on floor");
         AssertNear(top.Position.Y, 7.5f, 0.15f, "Top crate rests cleanly on bottom crate");
+    }
+
+    // ── Test: Puzzle paper balls fall to floor, collide with player and each other ──
+    private static void TestPuzzleBallsFallAndCollide()
+    {
+        Console.WriteLine("\n── Puzzle balls (P_Ball_Paper) fall & collide ──");
+        var collider = new TriangleMeshCollider(16f);
+        AddFloorQuad(collider, -100, 100, -100, 100);
+
+        var p1 = new PuzzleBall(BallMaterial.Paper, new Vector3(6f, 8f, 0f));
+        var p2 = new PuzzleBall(BallMaterial.Paper, new Vector3(11f, 8f, 0f));
+        var pBalls = new List<PuzzleBall> { p1, p2 };
+        var boxes = new List<MovableBox>();
+        var player = new BallPlayer(new Vector3(-6f, 2f, 0f), BallMaterial.Wood);
+        float dt = 1f / 60f;
+
+        // First let the paper balls fall and settle onto the floor
+        for (int i = 0; i < 120; i++)
+            PuzzleBall.StepAll(pBalls, player, boxes, dt, collider);
+
+        AssertNear(p1.Position.Y, 2.0f, 0.2f, $"Paper ball 1 fell to floor (Y={p1.Position.Y:F2})");
+        Assert(p1.IsGrounded, "Paper ball 1 is grounded");
+
+        // Now drive the wood player ball into the paper balls
+        float p2StartX = p2.Position.X;
+        for (int i = 0; i < 120; i++)
+        {
+            player.Update(dt, new Vector2(1f, 0f), Vector3.UnitZ, Vector3.UnitX, collider, boxes);
+            PuzzleBall.StepAll(pBalls, player, boxes, dt, collider);
+        }
+
+        Assert(p1.Position.X > 10f, $"Wood ball pushed paper ball 1 (X={p1.Position.X:F2})");
+        Assert(p2.Position.X > p2StartX + 2f, $"Paper ball 1 knocked paper ball 2 (X={p2.Position.X:F2})");
+        Assert(Vector3.Distance(p1.Position, p2.Position) >= 3.85f, "Paper balls do not overlap");
     }
 
     // ── Integration: real level data ────────────────────────────────

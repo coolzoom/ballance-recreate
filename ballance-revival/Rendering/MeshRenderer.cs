@@ -215,12 +215,26 @@ public unsafe class MeshRenderer : IDisposable
                 {
                     texFile = nmoTex.FileName;
                     texture = _textureManager.GetTexture(texFile);
-                    // Preserve diffuse tint on opaque textured materials (rails, transformers, floor sides),
-                    // while keeping additive/shadow decals untinted when their diffuse is black.
+                    // Preserve diffuse tint on opaque textured materials (rails, transformers, floor sides).
+                    // For additive glows/halos whose diffuse is black (e.g. P_Extra_Life_Schatten, ShadowPolyBig),
+                    // tint using their emissive color at full alpha so they glow cleanly on the floor.
                     bool hasNonBlackDiffuse = (r | g | b) != 0;
-                    tint = (!alpha && !additive && hasNonBlackDiffuse)
-                        ? new Color(r, g, b, a)
-                        : new Color((byte)255, (byte)255, (byte)255, a);
+                    uint emis = nmoMat.EmissiveColor & 0x00FFFFFF;
+                    if (!alpha && !additive && hasNonBlackDiffuse)
+                    {
+                        tint = new Color(r, g, b, a);
+                    }
+                    else if (additive && !hasNonBlackDiffuse && emis != 0)
+                    {
+                        byte er = (byte)Math.Min(255, ((emis >> 16) & 0xFF) * 3 / 2);
+                        byte eg = (byte)Math.Min(255, ((emis >> 8) & 0xFF) * 3 / 2);
+                        byte eb = (byte)Math.Min(255, (emis & 0xFF) * 3 / 2);
+                        tint = new Color(er, eg, eb, (byte)255);
+                    }
+                    else
+                    {
+                        tint = new Color((byte)255, (byte)255, (byte)255, additive ? (byte)255 : a);
+                    }
                 }
                 else
                 {
@@ -260,8 +274,8 @@ public unsafe class MeshRenderer : IDisposable
             mat.Maps[(int)MaterialMapIndex.Albedo].Color = tint;
 
             var render = new RenderSubmesh(mesh, mat) { Alpha = alpha, Additive = additive, Surface = surface };
-            // Blended decals (baked shadows, glows) should neither shine nor be darkened twice
-            if (alpha) render.Surface = new Vector4(0f, 1f, additive ? 0f : 1f, 0f);
+            // Blended decals (baked shadows, glows): additive effects stay self-lit so oil/caustic glows stay vivid
+            if (alpha) render.Surface = new Vector4(0f, 1f, additive ? 0f : 1f, additive ? -1f : 0f);
             renderMesh.Submeshes.Add(render);
         }
 

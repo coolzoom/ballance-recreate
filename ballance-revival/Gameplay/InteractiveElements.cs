@@ -299,3 +299,250 @@ public class MovableBox
         }
     }
 }
+
+/// <summary>
+/// Dynamic puzzle sphere (P_Ball_Paper, P_Ball_Wood, P_Ball_Stone) with exact original
+/// Levelinit.nmo physics parameters, rolling rotation, floor/rail collision, and
+/// sphere-vs-sphere / sphere-vs-box interactions.
+/// </summary>
+public class PuzzleBall
+{
+    public Vector3 Position { get; set; }
+    public Vector3 Velocity { get; set; }
+    public Vector3 AngularVelocity { get; set; }
+    public Quaternion Rotation { get; set; } = Quaternion.Identity;
+    public bool IsGrounded { get; private set; }
+
+    public BallMaterial Material { get; }
+    public string PrefabKey { get; }
+    public float Radius { get; } = 2.0f;
+    public float Mass { get; }
+    public float Elasticity { get; }
+    public float LinearDamp { get; }
+    public float RollingResistance { get; }
+    public NmoEntity? Entity { get; }
+
+    public PuzzleBall(BallMaterial material, Vector3 position, NmoEntity? entity = null)
+    {
+        Material = material;
+        Position = position;
+        Entity = entity;
+
+        // Exact Levelinit.nmo Physicalize_Convex / Physicalize_Balls parameters
+        switch (material)
+        {
+            case BallMaterial.Paper:
+                PrefabKey = "P_Ball_Paper";
+                Mass = 0.2f;
+                Elasticity = 0.4f;
+                LinearDamp = 1.5f;
+                RollingResistance = 7.0f;
+                break;
+            case BallMaterial.Stone:
+                PrefabKey = "P_Ball_Stone";
+                Mass = 10.0f;
+                Elasticity = 0.1f;
+                LinearDamp = 0.2f;
+                RollingResistance = 2.0f;
+                break;
+            default:
+                PrefabKey = "P_Ball_Wood";
+                Mass = 2.0f;
+                Elasticity = 0.2f;
+                LinearDamp = 0.6f;
+                RollingResistance = 4.5f;
+                break;
+        }
+    }
+
+    public static void StepAll(
+        IReadOnlyList<PuzzleBall> balls,
+        BallPlayer player,
+        IReadOnlyList<MovableBox> boxes,
+        float dt,
+        Physics.TriangleMeshCollider collider)
+    {
+        if (balls.Count == 0) return;
+
+        const int subSteps = 4;
+        float subDt = dt / subSteps;
+
+        for (int step = 0; step < subSteps; step++)
+        {
+            for (int i = 0; i < balls.Count; i++)
+            {
+                var b = balls[i];
+                // Gravity + horizontal air/linear damping
+                b.Velocity = new Vector3(b.Velocity.X, b.Velocity.Y + BallPlayer.Gravity * subDt, b.Velocity.Z);
+                float damp = MathF.Exp(-b.LinearDamp * subDt);
+                b.Velocity = new Vector3(b.Velocity.X * damp, b.Velocity.Y, b.Velocity.Z * damp);
+                b.Position += b.Velocity * subDt;
+
+                // Track/floor/rail collision
+                if (collider.CollideSphere(b.Position, b.Radius, out Vector3 corr, out Vector3 normal, out bool grounded))
+                {
+                    b.Position += corr;
+                    b.IsGrounded = grounded;
+
+                    float vn = Vector3.Dot(b.Velocity, normal);
+                    if (vn < 0f)
+                    {
+                        float bounce = (-vn > 2.5f) ? b.Elasticity : 0f;
+                        b.Velocity -= normal * (vn * (1f + bounce));
+                    }
+
+                    Vector3 tVel = b.Velocity - normal * Vector3.Dot(b.Velocity, normal);
+                    float tSpeed = tVel.Length();
+                    if (tSpeed > 1e-4f)
+                    {
+                        float drop = MathF.Min(tSpeed, b.RollingResistance * subDt);
+                        b.Velocity -= tVel * (drop / tSpeed);
+                    }
+
+                    Vector3 targetAng = Vector3.Cross(normal, b.Velocity) / b.Radius;
+                    b.AngularVelocity = Vector3.Lerp(b.AngularVelocity, targetAng, 16f * subDt);
+                }
+                else
+                {
+                    b.IsGrounded = false;
+                }
+
+                // PuzzleBall vs Player Ball (sphere-vs-sphere)
+                ResolveSphereVsPlayer(b, player);
+
+                // PuzzleBall vs MovableBoxes (sphere-vs-OBB)
+                for (int k = 0; k < boxes.Count; k++)
+                    ResolveSphereVsBox(b, boxes[k]);
+
+                b.AngularVelocity *= MathF.Exp(-0.8f * subDt);
+            }
+
+            // PuzzleBall vs PuzzleBall (sphere-vs-sphere)
+            for (int i = 0; i < balls.Count; i++)
+            {
+                for (int j = i + 1; j < balls.Count; j++)
+                    ResolveSpherePair(balls[i], balls[j]);
+            }
+
+            // Re-enforce static floor/wall bounds after sphere-sphere pushes
+            for (int i = 0; i < balls.Count; i++)
+            {
+                var b = balls[i];
+                if (collider.CollideSphere(b.Position, b.Radius, out Vector3 corr, out Vector3 normal, out bool grounded))
+                {
+                    b.Position += corr;
+                    if (grounded) b.IsGrounded = true;
+                    float vn = Vector3.Dot(b.Velocity, normal);
+                    if (vn < 0f) b.Velocity -= normal * vn;
+                }
+            }
+        }
+
+        // Integrate visual 3D rolling rotation
+        for (int i = 0; i < balls.Count; i++)
+        {
+            var b = balls[i];
+            float angSpeed = b.AngularVelocity.Length();
+            if (angSpeed > 1e-4f)
+            {
+                Vector3 axis = b.AngularVelocity / angSpeed;
+                Quaternion dq = Quaternion.CreateFromAxisAngle(axis, angSpeed * dt);
+                b.Rotation = Quaternion.Normalize(dq * b.Rotation);
+            }
+        }
+    }
+
+    private static void ResolveSphereVsPlayer(PuzzleBall b, BallPlayer player)
+    {
+        Vector3 diff = b.Position - player.Position;
+        float minDist = b.Radius + player.Properties.Radius;
+        float distSq = diff.LengthSquared();
+        if (distSq >= minDist * minDist || distSq < 1e-8f) return;
+
+        float dist = MathF.Sqrt(distSq);
+        Vector3 n = diff / dist; // points from player -> puzzle ball
+        float pen = minDist - dist;
+
+        float invB = 1f / b.Mass;
+        float invP = 1f / player.Properties.Mass;
+        float invSum = invB + invP;
+
+        b.Position += n * (pen * (invB / invSum));
+        player.Position -= n * (pen * (invP / invSum));
+
+        float vn = Vector3.Dot(b.Velocity - player.Velocity, n);
+        if (vn < 0f)
+        {
+            float e = MathF.Max(b.Elasticity, player.Properties.Restitution) * 0.6f;
+            float j = -(1f + e) * vn / invSum;
+            b.Velocity += n * (j * invB);
+            player.Velocity -= n * (j * invP);
+        }
+    }
+
+    private static void ResolveSpherePair(PuzzleBall a, PuzzleBall b)
+    {
+        Vector3 diff = b.Position - a.Position;
+        float minDist = a.Radius + b.Radius;
+        float distSq = diff.LengthSquared();
+        if (distSq >= minDist * minDist || distSq < 1e-8f) return;
+
+        float dist = MathF.Sqrt(distSq);
+        Vector3 n = diff / dist; // points from a -> b
+        float pen = minDist - dist;
+
+        float invA = 1f / a.Mass;
+        float invB = 1f / b.Mass;
+        float invSum = invA + invB;
+
+        a.Position -= n * (pen * (invA / invSum));
+        b.Position += n * (pen * (invB / invSum));
+
+        float vn = Vector3.Dot(b.Velocity - a.Velocity, n);
+        if (vn < 0f)
+        {
+            float e = MathF.Min(a.Elasticity, b.Elasticity) * 0.5f;
+            float j = -(1f + e) * vn / invSum;
+            a.Velocity -= n * (j * invA);
+            b.Velocity += n * (j * invB);
+        }
+    }
+
+    private static void ResolveSphereVsBox(PuzzleBall b, MovableBox box)
+    {
+        Vector3 rel = b.Position - box.Position;
+        Vector3 local = new(
+            Vector3.Dot(rel, box.AxisX),
+            Vector3.Dot(rel, box.AxisY),
+            Vector3.Dot(rel, box.AxisZ)
+        );
+        Vector3 clamped = Vector3.Clamp(local, -box.HalfExtents, box.HalfExtents);
+        Vector3 localDiff = local - clamped;
+        float distSq = localDiff.LengthSquared();
+        if (distSq >= b.Radius * b.Radius || distSq < 1e-8f) return;
+
+        float dist = MathF.Sqrt(distSq);
+        Vector3 ln = localDiff / dist;
+        Vector3 n = Vector3.Normalize(box.AxisX * ln.X + box.AxisY * ln.Y + box.AxisZ * ln.Z);
+        float pen = b.Radius - dist;
+
+        float invBall = 1f / b.Mass;
+        float invBox = 1f / box.Mass;
+        float invSum = invBall + invBox;
+
+        b.Position += n * (pen * (invBall / invSum));
+        Vector3 boxCorr = -n * (pen * (invBox / invSum));
+        if (MathF.Abs(n.Y) < 0.5f || (box.IsGrounded && boxCorr.Y < 0f)) boxCorr.Y = 0f;
+        box.Position += boxCorr;
+
+        float vn = Vector3.Dot(b.Velocity - box.Velocity, n);
+        if (vn < 0f)
+        {
+            float j = -(1f + b.Elasticity * 0.5f) * vn / invSum;
+            b.Velocity += n * (j * invBall);
+            Vector3 boxImp = -n * (j * invBox);
+            if (MathF.Abs(n.Y) < 0.5f || (box.IsGrounded && boxImp.Y < 0f)) boxImp.Y = 0f;
+            box.Velocity += boxImp;
+        }
+    }
+}

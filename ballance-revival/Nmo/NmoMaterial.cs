@@ -43,15 +43,22 @@ public class NmoMaterial
     public uint EmissiveColor { get; set; } = 0xFF000000; // ARGB
     public float Power { get; set; } = 0f; // Virtools specular shininess exponent
     public uint TextureObjectIndex { get; set; } = uint.MaxValue;
+    public uint BlendFactors { get; set; } // w[7]: Virtools packed SrcBlend/DstBlend nibbles
     public uint Options { get; set; }
 
     // Bit 3 of the Virtools material option word selects alpha blending (shadows, fades, glass)
     public bool AlphaBlend => (Options & 0x8) != 0;
 
+    // Virtools w[7] packed blend nibbles: bits 12..15 = SrcBlend, bits 16..19 = DstBlend.
+    // Standard alpha blend is 0x13265224 (Src=5 SRCALPHA, Dst=6 INVSRCALPHA);
+    // additive glow/halo is 0x13222222 (Src=2 ONE, Dst=2 ONE).
+    private uint DstBlend => (BlendFactors >> 16) & 0xF;
+
     public bool Additive =>
-        AlphaBlend && Name.Contains("Verlauf", StringComparison.OrdinalIgnoreCase)
+        (AlphaBlend && (DstBlend == 2 || Name.Contains("Verlauf", StringComparison.OrdinalIgnoreCase)))
         || Name.Contains("Flash", StringComparison.OrdinalIgnoreCase)
-        || Name.Contains("Glow", StringComparison.OrdinalIgnoreCase);
+        || Name.Contains("Glow", StringComparison.OrdinalIgnoreCase)
+        || Name.Equals("P_Extra_Life_Sphere", StringComparison.OrdinalIgnoreCase);
 
     public static NmoMaterial? FromObject(NmoObject obj)
     {
@@ -72,7 +79,7 @@ public class NmoMaterial
             mat.Power = obj.Chunk.ReadFloat(); // Shininess exponent
             mat.TextureObjectIndex = obj.Chunk.ReadUInt32();
             obj.Chunk.ReadUInt32();
-            obj.Chunk.ReadUInt32();
+            mat.BlendFactors = obj.Chunk.ReadUInt32();
             mat.Options = obj.Chunk.ReadUInt32();
         }
 
