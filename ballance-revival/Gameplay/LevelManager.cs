@@ -364,10 +364,15 @@ public class LevelManager
             }
         }
 
-        // Update Movable Boxes
+        // Ball-vs-box contact is resolved inside BallPlayer. Here separate any boxes that
+        // overlap or are pushed into each other, then run each box's own dynamics.
+        for (int i = 0; i < Boxes.Count; i++)
+            for (int j = i + 1; j < Boxes.Count; j++)
+                MovableBox.ResolvePair(Boxes[i], Boxes[j]);
+
         foreach (var box in Boxes)
         {
-            box.Update(dt, Player);
+            box.Update(dt, Collider);
         }
 
         // Check goal (PE_Balloon UFO platform)

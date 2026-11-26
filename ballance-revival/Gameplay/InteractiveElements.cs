@@ -96,7 +96,8 @@ public class MovableBox
 {
     public Vector3 Position { get; set; }
     public Vector3 Velocity { get; set; }
-    public Vector3 HalfExtents { get; } = new(1.8f, 1.8f, 1.8f);
+    // P_Box_Mesh spans -2.5..2.5 on every axis
+    public Vector3 HalfExtents { get; } = new(2.5f, 2.5f, 2.5f);
     public float Mass { get; } = 25.0f;
     public NmoEntity? Entity { get; }
 
@@ -106,32 +107,92 @@ public class MovableBox
         Entity = entity;
     }
 
-    public void Update(float dt, BallPlayer ball)
+    // The ball-vs-box contact is resolved inside BallPlayer (its own substeps) so
+    // the ball reacts in the same frame and can never tunnel through a box. This
+    // method only simulates the box's own dynamics: gravity, settling friction,
+    // integration, and the box's collision with the level floor.
+    public void Update(float dt, Physics.TriangleMeshCollider? collider = null)
     {
-        // Simple sphere vs box push interaction
-        Vector3 diff = ball.Position - Position;
-        Vector3 clamped = Vector3.Clamp(diff, -HalfExtents, HalfExtents);
-        Vector3 closest = Position + clamped;
-        Vector3 toBall = ball.Position - closest;
-        float distSq = toBall.LengthSquared();
+        // Apply gravity (#8 fix)
+        Velocity = new Vector3(Velocity.X, Velocity.Y + BallPlayer.Gravity * dt, Velocity.Z);
 
-        if (distSq < ball.Properties.Radius * ball.Properties.Radius && distSq > 1e-6f)
+        // Kinetic friction with the floor. Boxes slide when pushed and gradually settle;
+        // a gentle resting drag (not a hard brake) so a driven ball can actually push it.
+        float drag = MathF.Exp(-BoxKineticFriction * dt);
+        Velocity = new Vector3(Velocity.X * drag, Velocity.Y, Velocity.Z * drag);
+
+        // Integrate position
+        Position += Velocity * dt;
+
+        // Floor collision for the box (#8 fix)
+        // Approximate as a sphere of radius equal to half-extent Y for ground checking
+        if (collider != null)
         {
-            float dist = MathF.Sqrt(distSq);
-            Vector3 pushDir = toBall / dist;
-            float penetration = ball.Properties.Radius - dist;
+            float boxCheckRadius = HalfExtents.Y;
+            if (collider.CollideSphere(Position, boxCheckRadius, out Vector3 correction, out Vector3 normal, out bool _))
+            {
+                Position += correction;
+                float normalVel = Vector3.Dot(Velocity, normal);
+                if (normalVel < 0f)
+                {
+                    Velocity -= normal * normalVel;
+                }
+            }
+        }
+    }
 
-            // Only push box if ball has enough mass (Stone ball or fast Wood ball)
-            float pushForce = (ball.Properties.Mass / (ball.Properties.Mass + Mass));
-            Position -= pushDir * (penetration * (1f - pushForce));
-            ball.Position += pushDir * (penetration * pushForce);
+    // Kinetic friction coefficient applied (exponentially, frame-rate independent) to a
+    // box sliding on the floor. Small enough that a driven ball can slide the box, large
+    // enough that it eventually settles after being pushed.
+    public const float BoxKineticFriction = 2.5f;
 
-            // Transfer velocity
-            Velocity -= pushDir * Vector3.Dot(ball.Velocity, pushDir) * 0.5f;
+    // Restitution used when two boxes collide / are pushed into each other (kept low so
+    // chained pushes move together instead of bouncing apart).
+    public const float BoxRestitution = 0.05f;
+
+    /// <summary>
+    /// Resolve two overlapping boxes against each other (AABB vs AABB). Momentum is
+    /// exchanged along the minimum-overlap axis so a box driven into another pushes it
+    /// instead of sinking in, and any residual penetration is split by inverse mass.
+    /// </summary>
+    public static void ResolvePair(MovableBox a, MovableBox b)
+    {
+        Vector3 d = a.Position - b.Position;          // points from b to a
+        Vector3 overlap = (a.HalfExtents + b.HalfExtents) - Vector3.Abs(d);
+
+        if (overlap.X <= 0f || overlap.Y <= 0f || overlap.Z <= 0f) return; // no overlap
+
+        // Minimum-overlap axis is the contact axis; n points from b to a (sign of d),
+        // not from overlap (which is always positive).
+        Vector3 n;
+        float pen;
+        if (overlap.X <= overlap.Y && overlap.X <= overlap.Z)
+        {
+            n = new Vector3(d.X >= 0f ? 1f : -1f, 0f, 0f); pen = overlap.X;
+        }
+        else if (overlap.Y <= overlap.Z)
+        {
+            n = new Vector3(0f, d.Y >= 0f ? 1f : -1f, 0f); pen = overlap.Y;
+        }
+        else
+        {
+            n = new Vector3(0f, 0f, d.Z >= 0f ? 1f : -1f); pen = overlap.Z;
         }
 
-        // Apply friction and small gravity
-        Velocity = new Vector3(Velocity.X * 0.90f, Velocity.Y, Velocity.Z * 0.90f);
-        Position += Velocity * dt;
+        // Split separation by inverse mass (lighter box moves more).
+        float invMassSum = 1f / a.Mass + 1f / b.Mass;
+        float aShare = (1f / a.Mass) / invMassSum;
+
+        float vn = Vector3.Dot(a.Velocity - b.Velocity, n);   // < 0 means approaching
+        if (vn < 0f)
+        {
+            float restitution = (-vn > BallPlayer.BallBoxBounceSpeed) ? BoxRestitution : 0f;
+            float jn = -(1f + restitution) * vn / invMassSum;
+            a.Velocity += n * (jn / a.Mass);
+            b.Velocity -= n * (jn / b.Mass);
+        }
+        float bShare = (1f / b.Mass) / invMassSum;
+        a.Position += n * (pen * aShare);
+        b.Position -= n * (pen * bShare);
     }
 }

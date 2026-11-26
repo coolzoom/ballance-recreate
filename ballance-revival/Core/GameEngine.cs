@@ -168,7 +168,7 @@ public class GameEngine : IDisposable
         bool isSpace = Raylib.IsKeyDown(KeyboardKey.Space);
 
         // Update player ball physics
-        _levelManager.Player.Update(dt, moveInput, _camera.Forward, _camera.Right, _levelManager.Collider);
+        _levelManager.Player.Update(dt, moveInput, _camera.Forward, _camera.Right, _levelManager.Collider, _levelManager.Boxes);
 
         // Update level events and triggers
         _levelManager.Update(dt, _totalTime);
