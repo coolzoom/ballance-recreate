@@ -1,0 +1,6 @@
+# .NET build output
+bin/
+obj/
+
+# macOS Finder
+.DS_Store
